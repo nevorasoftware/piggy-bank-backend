@@ -19,13 +19,18 @@ async function main() {
   console.log('✅ GameConfig configurado:', gameConfig);
 
   // 2. Administrador del Sistema
-  const hashedPassword = await bcrypt.hash('AdminPiggy2026!', 10);
+  const hashedPassword = await bcrypt.hash('Gacela@2305', 10);
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@piggybank.sv' },
-    update: {},
+    where: { email: 'admin@piggybank.com' },
+    update: {
+      password: hashedPassword,
+      role: Role.ADMIN,
+      emailVerified: true,
+      phoneVerified: true,
+    },
     create: {
       fullName: 'Administrador PiggyBank',
-      email: 'admin@piggybank.sv',
+      email: 'admin@piggybank.com',
       phone: '+50370001122',
       dui: '01234567-8',
       password: hashedPassword,
@@ -34,7 +39,7 @@ async function main() {
       phoneVerified: true,
     },
   });
-  console.log('✅ Admin creado:', admin.email);
+  console.log('✅ Admin creado/actualizado:', admin.email);
 
   // 3. Usuario de Prueba
   const userPassword = await bcrypt.hash('Jugador2026!', 10);
