@@ -15,8 +15,8 @@ async function bootstrap() {
   // Inicializar Cron Job de reseteo a las 00:00 (America/El_Salvador)
   initDailyResetCron();
 
-  // Escuchar en el puerto dinámico de Railway
-  server.listen(ENV.PORT, () => {
+  // Escuchar en el puerto dinámico de Railway en todas las interfaces de red (0.0.0.0)
+  server.listen(ENV.PORT, '0.0.0.0', () => {
     console.log(`====================================================`);
     console.log(`🐷 PiggyBank Backend iniciado con éxito`);
     console.log(`🚀 Puerto: ${ENV.PORT}`);

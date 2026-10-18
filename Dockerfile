@@ -46,9 +46,8 @@ RUN npx prisma generate
 # Copiar código compilado desde el builder
 COPY --from=builder /app/dist ./dist
 
-# Puerto asignado dinámicamente por Railway (default 3000)
-ENV PORT=3000
-EXPOSE 3000
+# Puerto asignado dinámicamente por Railway
+EXPOSE 3000 8080
 
 # Script de inicio que aplica migraciones pendientes y arranca el servidor
 CMD ["sh", "-c", "(npx prisma migrate deploy || npx prisma db push) && node dist/index.js"]
