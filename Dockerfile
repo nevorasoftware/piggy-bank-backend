@@ -51,4 +51,4 @@ ENV PORT=3000
 EXPOSE 3000
 
 # Script de inicio que aplica migraciones pendientes y arranca el servidor
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+CMD ["sh", "-c", "(npx prisma migrate deploy || npx prisma db push) && node dist/index.js"]
