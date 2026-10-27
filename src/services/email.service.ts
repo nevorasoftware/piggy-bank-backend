@@ -132,6 +132,13 @@ export class EmailService {
     const useOAuth = config.provider === 'GMAIL_API' ? hasOAuth : false;
 
     if (useOAuth) {
+      let cleanRefreshToken = config.refreshToken.trim();
+      try {
+        cleanRefreshToken = decodeURIComponent(cleanRefreshToken);
+      } catch {
+        // fallback to original if decoding fails
+      }
+
       return {
         config,
         isOAuth: true,
@@ -142,7 +149,7 @@ export class EmailService {
             user: config.smtpUser,
             clientId: config.clientId.trim(),
             clientSecret: config.clientSecret.trim(),
-            refreshToken: config.refreshToken.trim(),
+            refreshToken: cleanRefreshToken,
           },
         }),
       };
