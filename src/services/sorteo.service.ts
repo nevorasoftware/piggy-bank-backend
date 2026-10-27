@@ -3,6 +3,7 @@ import { prisma } from '../config/database';
 import { RoomStatus, TicketStatus, PayoutStatus } from '@prisma/client';
 import { broadcastSorteoStart, broadcastSorteoWinner } from '../socket/socket.handler';
 import { WhatsAppService } from './whatsapp.service';
+import { EmailService } from './email.service';
 import { getElSalvadorDateString } from '../utils/date';
 
 export class SorteoService {
@@ -125,24 +126,37 @@ export class SorteoService {
       ganadorNombre: maskedName,
       premio: Number(room.premio),
       fecha: sorteo.fechaSorteo,
+      winnerUserId: winnerUser.id,
     });
 
-    // 5. Notificar al ganador por WhatsApp
+    // 5. Notificar al ganador por Correo Electrónico
     const bankDetails = winnerUser.bankAccount
       ? `${winnerUser.bankAccount.bankName} - No. ${winnerUser.bankAccount.accountNumber}`
-      : 'Pendiente de registrar en tu perfil';
+      : undefined;
 
+    if (winnerUser.email) {
+      EmailService.sendWinnerNotificationEmail(
+        winnerUser.email,
+        winnerUser.fullName,
+        room.nombre,
+        winningTicket.ticketNumber,
+        Number(room.premio),
+        bankDetails
+      ).catch((err) => console.error('Error al enviar correo al ganador:', err));
+    }
+
+    // 6. Notificar al ganador por WhatsApp
     if (winnerUser.phone) {
       await WhatsAppService.sendWinnerNotification(
         winnerUser.phone,
         winnerUser.fullName,
         room.nombre,
         Number(room.premio),
-        bankDetails
+        bankDetails || 'Pendiente de registrar en tu perfil'
       );
     }
 
-    // 6. Notificar a los demás participantes
+    // 7. Notificar a los demás participantes
     for (const ticket of room.tickets) {
       if (ticket.userId !== winnerUser.id && ticket.user.phone) {
         WhatsAppService.sendNonWinnerNotification(ticket.user.phone, room.nombre).catch(() => {});
@@ -216,11 +230,29 @@ export class SorteoService {
       return updated;
     });
 
+    const bankName = sorteo.ganador.bankAccount?.bankName || 'Cuenta Bancaria';
+    const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
+
+    // Enviar Correo al ganador confirmando el pago aplicado
+    if (sorteo.ganador?.email) {
+      const winningTicket = await prisma.ticket.findUnique({
+        where: { id: sorteo.ticketGanadorId },
+      });
+
+      EmailService.sendPayoutConfirmedEmail(
+        sorteo.ganador.email,
+        sorteo.ganador.fullName,
+        sorteo.room.nombre,
+        winningTicket?.ticketNumber || 'TKT-GANADOR',
+        Number(sorteo.montoPremio),
+        bankName,
+        accountNumber,
+        notas || 'Pago verificado y transferido por administración.'
+      ).catch((err) => console.error('Error al enviar correo de pago aplicado:', err));
+    }
+
     // Enviar WhatsApp al ganador confirmando el pago aplicado
     if (sorteo.ganador?.phone) {
-      const bankName = sorteo.ganador.bankAccount?.bankName || 'Cuenta Bancaria';
-      const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
-
       await WhatsAppService.sendPayoutAppliedNotification(
         sorteo.ganador.phone,
         sorteo.ganador.fullName,

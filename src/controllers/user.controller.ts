@@ -82,7 +82,11 @@ export class UserController {
       const tickets = await prisma.ticket.findMany({
         where: { userId },
         include: {
-          room: true,
+          room: {
+            include: {
+              sorteo: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       });

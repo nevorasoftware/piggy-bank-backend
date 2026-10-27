@@ -94,7 +94,11 @@ export class TicketController {
           roomId,
         },
         include: {
-          room: true,
+          room: {
+            include: {
+              sorteo: true,
+            },
+          },
           user: {
             select: {
               fullName: true,

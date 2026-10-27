@@ -53,6 +53,7 @@ export function broadcastRoomUpdate(roomId: string, data: any): void {
 export function broadcastSorteoStart(roomId: string, data: any): void {
   if (io) {
     io.to(`room_${roomId}`).emit('sorteo:iniciar', data);
+    io.emit('global:sorteo_start', data);
   }
 }
 
@@ -62,6 +63,8 @@ export function broadcastSorteoStart(roomId: string, data: any): void {
 export function broadcastSorteoWinner(roomId: string, data: any): void {
   if (io) {
     io.to(`room_${roomId}`).emit('sorteo:ganador', data);
-    io.emit('rooms:list_update', { roomId, estado: 'FINALIZADA' });
+    io.emit('rooms:list_update', { roomId, estado: 'FINALIZADA', ...data });
+    io.emit('global:sorteo_winner', data);
   }
 }
+
