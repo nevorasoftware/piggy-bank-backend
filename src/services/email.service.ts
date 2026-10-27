@@ -124,10 +124,20 @@ export class EmailService {
   }
 
   /**
-   * Crea un transporter de nodemailer según la configuración (Gmail API OAuth2 o SMTP App Password)
+   * Envía un correo ya sea usando la API REST oficial de Gmail (HTTPS) o SMTP clásico
    */
-  private static async createTransporter() {
+  public static async sendMail(options: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+  }): Promise<{ success: boolean; messageId?: string; isOAuth: boolean; error?: string }> {
     const config = await this.getEmailConfig();
+
+    if (!config.isActive) {
+      return { success: false, isOAuth: false, error: 'Servicio de email desactivado en la configuración.' };
+    }
+
     const hasOAuth = Boolean(config.clientId && config.clientSecret && config.refreshToken);
     const useOAuth = config.provider === 'GMAIL_API' ? hasOAuth : false;
 
@@ -136,38 +146,91 @@ export class EmailService {
       try {
         cleanRefreshToken = decodeURIComponent(cleanRefreshToken);
       } catch {
-        // fallback to original if decoding fails
+        // fallback
       }
 
-      return {
-        config,
-        isOAuth: true,
-        transporter: nodemailer.createTransport({
-          service: 'gmail',
-          auth: {
-            type: 'OAuth2',
-            user: config.smtpUser,
-            clientId: config.clientId.trim(),
-            clientSecret: config.clientSecret.trim(),
-            refreshToken: cleanRefreshToken,
+      // 1. Obtener access_token fresco desde Google OAuth2 vía HTTPS (Puerto 443 - Nunca bloqueado por Railway/Cloud)
+      const tokenRes = await axios.post(
+        'https://oauth2.googleapis.com/token',
+        new URLSearchParams({
+          client_id: config.clientId.trim(),
+          client_secret: config.clientSecret.trim(),
+          refresh_token: cleanRefreshToken,
+          grant_type: 'refresh_token',
+        }).toString(),
+        {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          timeout: 10000,
+        }
+      );
+
+      const accessToken = tokenRes.data.access_token;
+      if (!accessToken) {
+        throw new Error('Google no devolvió un access_token válido.');
+      }
+
+      // 2. Compilar el correo RFC 2822
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const MailComposer = require('nodemailer/lib/mail-composer');
+      const mail = new MailComposer({
+        from: `"${config.senderName}" <${config.smtpUser}>`,
+        to: options.to,
+        subject: options.subject,
+        text: options.text,
+        html: options.html,
+      });
+
+      const rawBuffer: Buffer = await mail.compile().build();
+      const raw = rawBuffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      // 3. Enviar vía Gmail REST API (HTTPS puerto 443)
+      const sendRes = await axios.post(
+        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+        { raw },
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
           },
-        }),
+          timeout: 15000,
+        }
+      );
+
+      return {
+        success: true,
+        isOAuth: true,
+        messageId: sendRes.data.id,
       };
     }
 
+    // Fallback: SMTP clásico (en caso de que se configure un servidor SMTP propio)
+    if (!config.smtpPass) {
+      return { success: false, isOAuth: false, error: 'Falta configurar la contraseña de aplicación de Gmail.' };
+    }
+
     const cleanPassword = (config.smtpPass || '').replace(/\s+/g, '');
+    const transporter = nodemailer.createTransport({
+      host: config.smtpHost,
+      port: config.smtpPort,
+      secure: config.smtpSecure,
+      auth: {
+        user: config.smtpUser,
+        pass: cleanPassword,
+      },
+    });
+
+    const info = await transporter.sendMail({
+      from: `"${config.senderName}" <${config.smtpUser}>`,
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+    });
+
     return {
-      config,
+      success: true,
       isOAuth: false,
-      transporter: nodemailer.createTransport({
-        host: config.smtpHost,
-        port: config.smtpPort,
-        secure: config.smtpSecure,
-        auth: {
-          user: config.smtpUser,
-          pass: cleanPassword,
-        },
-      }),
+      messageId: info.messageId,
     };
   }
 
@@ -184,7 +247,7 @@ export class EmailService {
     console.log(`======================================================\n`);
 
     try {
-      const { config, transporter, isOAuth } = await this.createTransporter();
+      const config = await this.getEmailConfig();
 
       if (!config.isActive) {
         console.warn('⚠️ El servicio de email está desactivado en la configuración.');
@@ -208,6 +271,7 @@ export class EmailService {
       }
 
       const nombreDisplay = fullName ? fullName.split(' ')[0] : 'Jugador';
+      const isOAuth = config.provider === 'GMAIL_API';
 
       const htmlContent = `
 <!DOCTYPE html>
@@ -276,7 +340,7 @@ export class EmailService {
                 PiggyBank El Salvador • Transacciones protegidas por Visa, Mastercard y 3D Secure
               </p>
               <p style="margin: 0; font-size: 11px; color: #475569;">
-                Enviado vía ${isOAuth ? 'Gmail API OAuth2' : 'SMTP'} desde <a href="mailto:${config.smtpUser}" style="color: #94a3b8; text-decoration: none;">${config.smtpUser}</a>
+                Enviado vía ${isOAuth ? 'Gmail REST API OAuth2' : 'SMTP'} desde <a href="mailto:${config.smtpUser}" style="color: #94a3b8; text-decoration: none;">${config.smtpUser}</a>
               </p>
             </td>
           </tr>
@@ -289,21 +353,28 @@ export class EmailService {
 </html>
       `;
 
-      const info = await transporter.sendMail({
-        from: `"${config.senderName}" <${config.smtpUser}>`,
+      const result = await this.sendMail({
         to: toEmail,
         subject: `🐷 Tu código de verificación PiggyBank: ${code}`,
         text: `¡Hola ${nombreDisplay}!\n\nTu código de verificación de PiggyBank es: ${code}\n\nEs válido durante 10 minutos. No compartas este código con nadie.\n\nPiggyBank El Salvador`,
         html: htmlContent,
       });
 
-      console.log(`✅ Correo enviado con éxito a ${toEmail}. MessageId: ${info.messageId}`);
-      return { success: true, messageId: info.messageId };
+      if (!result.success) {
+        return { success: false, error: result.error };
+      }
+
+      console.log(`✅ Correo enviado con éxito a ${toEmail}. MessageId: ${result.messageId}`);
+      return { success: true, messageId: result.messageId };
     } catch (error: any) {
       console.error('❌ Error al enviar correo de verificación:', error);
+      let errorMsg = error.message || 'Error al enviar correo vía Google Gmail API.';
+      if (error.response?.data?.error?.message) {
+        errorMsg = error.response.data.error.message;
+      }
       return {
         success: false,
-        error: error.message || 'Error al enviar correo vía Google Gmail API.',
+        error: errorMsg,
       };
     }
   }
@@ -315,7 +386,9 @@ export class EmailService {
     targetEmail?: string
   ): Promise<{ success: boolean; message: string; details?: any }> {
     try {
-      const { config, transporter, isOAuth } = await this.createTransporter();
+      const config = await this.getEmailConfig();
+      const hasOAuth = Boolean(config.clientId && config.clientSecret && config.refreshToken);
+      const useOAuth = config.provider === 'GMAIL_API' ? hasOAuth : false;
 
       if (config.provider === 'GMAIL_API' && (!config.clientId || !config.refreshToken)) {
         return {
@@ -333,40 +406,47 @@ export class EmailService {
         };
       }
 
-      // 1. Verificar credenciales con el servidor
-      await transporter.verify();
-
-      // 2. Enviar correo de prueba
       const recipient = targetEmail || config.smtpUser;
-      const testInfo = await transporter.sendMail({
-        from: `"${config.senderName}" <${config.smtpUser}>`,
+
+      const testResult = await this.sendMail({
         to: recipient,
         subject: '🧪 Prueba de Conexión Exitosa - PiggyBank Gmail API',
         html: `
           <div style="font-family: sans-serif; background: #0f172a; color: #ffffff; padding: 30px; border-radius: 16px;">
             <h2 style="color: #22c55e;">✅ Conexión con Gmail API Exitosa</h2>
             <p>La autenticación con Google Cloud Console para <strong>${config.smtpUser}</strong> está funcionando perfectamente.</p>
-            <p style="font-size: 12px; color: #94a3b8;">Método: ${isOAuth ? 'Google Cloud OAuth2 (Gmail API)' : 'SMTP App Password'}</p>
-            <p style="font-size: 12px; color: #f59e0b;">PiggyBank El Salvador - Notificaciones en tiempo real</p>
+            <p style="font-size: 13px; color: #94a3b8;">Método: ${useOAuth ? 'Google Cloud OAuth2 (Gmail REST API vía HTTPS)' : 'SMTP App Password'}</p>
+            <p style="font-size: 13px; color: #f59e0b;">PiggyBank El Salvador - Notificaciones en tiempo real 🐷</p>
           </div>
         `,
+        text: `¡Conexión con Gmail API exitosa para ${config.smtpUser}! Método: ${useOAuth ? 'Gmail REST API (HTTPS)' : 'SMTP'}.`,
       });
+
+      if (!testResult.success) {
+        throw new Error(testResult.error || 'Error al enviar por Gmail API.');
+      }
 
       return {
         success: true,
-        message: `Conexión con Google Gmail API (${isOAuth ? 'OAuth2' : 'SMTP'}) verificada y correo de prueba enviado exitosamente a ${recipient}.`,
-        details: { messageId: testInfo.messageId, recipient, method: isOAuth ? 'OAuth2' : 'SMTP' },
+        message: `Conexión con Google Gmail REST API (${testResult.isOAuth ? 'OAuth2 vía HTTPS' : 'SMTP'}) verificada y correo de prueba enviado exitosamente a ${recipient}.`,
+        details: { messageId: testResult.messageId, recipient, method: testResult.isOAuth ? 'OAuth2 (REST API)' : 'SMTP' },
       };
     } catch (error: any) {
       console.error('Error al probar conexión con Gmail API:', error);
       let errorMsg = error.message || 'Error al conectar con Google Gmail API.';
-      if (errorMsg.includes('invalid_grant')) {
+
+      if (error.response?.data?.error_description) {
+        errorMsg = `Google OAuth: ${error.response.data.error_description}`;
+      } else if (error.response?.data?.error?.message) {
+        errorMsg = `Gmail API: ${error.response.data.error.message}`;
+      } else if (errorMsg.includes('invalid_grant')) {
         errorMsg =
           'Google rechazó el Refresh Token (invalid_grant). El token expiró o fue revocado. Vuelve a autorizar la app en Google Cloud Console.';
       } else if (errorMsg.includes('invalid_client')) {
         errorMsg =
           'Client ID o Client Secret incorrectos de Google Cloud Console (invalid_client). Verifica que coincidan exactamente con tu proyecto de Google Cloud.';
       }
+
       return {
         success: false,
         message: errorMsg,

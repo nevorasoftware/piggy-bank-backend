@@ -49,5 +49,4 @@ COPY --from=builder /app/dist ./dist
 # Puerto asignado dinámicamente por Railway
 EXPOSE 3000 8080
 
-# Script de inicio que aplica migraciones pendientes y arranca el servidor
-CMD ["sh", "-c", "(npx prisma migrate deploy || npx prisma db push) && node dist/index.js"]
+CMD ["sh", "-c", "(npx prisma migrate resolve --applied 20261027000000_wompi_config 2>/dev/null || true) && (npx prisma migrate deploy || npx prisma db push) && node dist/index.js"]
