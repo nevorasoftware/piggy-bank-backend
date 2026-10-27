@@ -257,9 +257,68 @@ export class SorteoService {
   }
 
   /**
+   * Resuelve el usuario ganador registrado en la base de datos de manera exhaustiva y robusta.
+   * Consulta primero la relación del sorteo, luego la tabla users por ganadorUserId,
+   * luego por ticketGanadorId y finalmente por la sala.
+   */
+  public static async resolverUsuarioGanador(sorteo: any) {
+    if (!sorteo) return null;
+
+    // 1. Si la relación ganador ya trajo el usuario completo con su correo
+    if (sorteo.ganador?.email && sorteo.ganador.email.trim() !== '') {
+      return sorteo.ganador;
+    }
+
+    // 2. Consultar directamente a la tabla `users` mediante ganadorUserId
+    if (sorteo.ganadorUserId) {
+      const user = await prisma.user.findUnique({
+        where: { id: sorteo.ganadorUserId },
+        include: { bankAccount: true },
+      });
+      if (user?.email && user.email.trim() !== '') {
+        return user;
+      }
+    }
+
+    // 3. Consultar mediante el ticket ganador registrado en la base
+    if (sorteo.ticketGanadorId) {
+      const ticket = await prisma.ticket.findUnique({
+        where: { id: sorteo.ticketGanadorId },
+        include: {
+          user: {
+            include: { bankAccount: true },
+          },
+        },
+      });
+      if (ticket?.user?.email && ticket.user.email.trim() !== '') {
+        return ticket.user;
+      }
+    }
+
+    // 4. Consultar mediante winnerUserId de la sala
+    const roomId = sorteo.roomId || sorteo.room?.id;
+    if (roomId) {
+      const room = await prisma.room.findUnique({
+        where: { id: roomId },
+      });
+      if (room?.winnerUserId) {
+        const user = await prisma.user.findUnique({
+          where: { id: room.winnerUserId },
+          include: { bankAccount: true },
+        });
+        if (user?.email && user.email.trim() !== '') {
+          return user;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Envía la notificación de confirmación de pago por correo EXCLUSIVAMENTE al ganador registrado.
    * Remitente de salida: piggybanksv@gmail.com
-   * Destinatario: Correo registrado en la cuenta del cliente ganador (sorteo.ganador.email)
+   * Destinatario: Correo registrado en la cuenta del cliente ganador
    */
   public static async enviarNotificacionPago(sorteoId: string) {
     const sorteo = await prisma.sorteo.findUnique({
@@ -273,30 +332,31 @@ export class SorteoService {
     });
 
     if (!sorteo) {
-      throw new Error('Sorteo no encontrado.');
+      throw new Error('Sorteo no encontrado en la base de datos.');
     }
 
-    if (!sorteo.ganador?.email) {
-      throw new Error('El jugador ganador no posee un correo electrónico registrado en su cuenta.');
+    const winnerUser = await this.resolverUsuarioGanador(sorteo);
+    if (!winnerUser || !winnerUser.email || winnerUser.email.trim() === '') {
+      throw new Error('El usuario ganador no posee un correo electrónico registrado en la base de datos.');
     }
 
     const winningTicket = await prisma.ticket.findUnique({
       where: { id: sorteo.ticketGanadorId },
     });
 
-    const bankName = sorteo.ganador.bankAccount?.bankName || 'Banco en El Salvador';
-    const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
+    const bankName = winnerUser.bankAccount?.bankName || 'Banco en El Salvador';
+    const accountNumber = winnerUser.bankAccount?.accountNumber || 'Registrada en perfil';
     const notas = sorteo.notasPago || 'Transferencia efectuada y verificada por administración.';
     const ticketNumber = winningTicket?.ticketNumber || 'TKT-GANADOR';
     const prize = Number(sorteo.montoPremio);
-    const winnerEmail = sorteo.ganador.email.trim();
+    const winnerEmail = winnerUser.email.trim();
 
-    console.log(`📧 [enviarNotificacionPago] Enviando correo de pago aplicado ÚNICAMENTE al ganador registrado: ${winnerEmail}`);
+    console.log(`📧 [enviarNotificacionPago] Enviando correo de pago aplicado al usuario registrado: ${winnerEmail} (${winnerUser.fullName})`);
 
     const res = await EmailService.sendPayoutConfirmedEmail(
       winnerEmail,
-      sorteo.ganador.fullName,
-      sorteo.room.nombre,
+      winnerUser.fullName,
+      sorteo.room?.nombre || 'Sala de Sorteo',
       ticketNumber,
       prize,
       bankName,
@@ -309,11 +369,71 @@ export class SorteoService {
       throw new Error(res.error || `No se pudo enviar el correo al ganador (${winnerEmail}).`);
     }
 
-    console.log(`✅ [enviarNotificacionPago] Correo entregado exitosamente al ganador (${winnerEmail}). MessageId: ${res.messageId}`);
+    console.log(`✅ [enviarNotificacionPago] Correo entregado exitosamente al ganador registrado (${winnerEmail}). MessageId: ${res.messageId}`);
 
     return {
       success: true,
       winnerEmail,
+      winnerName: winnerUser.fullName,
+      messageId: res.messageId,
+    };
+  }
+
+  /**
+   * Reenvía la notificación oficial de ganador por correo al usuario registrado en la base de datos.
+   */
+  public static async enviarNotificacionGanador(sorteoId: string) {
+    const sorteo = await prisma.sorteo.findUnique({
+      where: { id: sorteoId },
+      include: {
+        room: true,
+        ganador: {
+          include: { bankAccount: true },
+        },
+      },
+    });
+
+    if (!sorteo) {
+      throw new Error('Sorteo no encontrado en la base de datos.');
+    }
+
+    const winnerUser = await this.resolverUsuarioGanador(sorteo);
+    if (!winnerUser || !winnerUser.email || winnerUser.email.trim() === '') {
+      throw new Error('El usuario ganador no posee un correo electrónico registrado en la base de datos.');
+    }
+
+    const winningTicket = await prisma.ticket.findUnique({
+      where: { id: sorteo.ticketGanadorId },
+    });
+
+    const ticketNumber = winningTicket?.ticketNumber || 'TKT-GANADOR';
+    const bankDetails = winnerUser.bankAccount
+      ? `${winnerUser.bankAccount.bankName} - No. ${winnerUser.bankAccount.accountNumber}`
+      : undefined;
+    const winnerEmail = winnerUser.email.trim();
+
+    console.log(`📧 [enviarNotificacionGanador] Reenviando notificación de ganador al usuario registrado: ${winnerEmail} (${winnerUser.fullName})`);
+
+    const res = await EmailService.sendWinnerNotificationEmail(
+      winnerEmail,
+      winnerUser.fullName,
+      sorteo.room?.nombre || 'Sala de Sorteo',
+      ticketNumber,
+      Number(sorteo.montoPremio),
+      bankDetails
+    );
+
+    if (!res.success) {
+      console.error(`❌ [enviarNotificacionGanador] Error al reenviar correo de ganador (${winnerEmail}):`, res.error);
+      throw new Error(res.error || `No se pudo enviar la notificación de ganador (${winnerEmail}).`);
+    }
+
+    console.log(`✅ [enviarNotificacionGanador] Correo de ganador entregado exitosamente a (${winnerEmail}). MessageId: ${res.messageId}`);
+
+    return {
+      success: true,
+      winnerEmail,
+      winnerName: winnerUser.fullName,
       messageId: res.messageId,
     };
   }

@@ -179,6 +179,11 @@ export class EmailService {
       return { success: false, isOAuth: false, error: 'Servicio de email desactivado en la configuración.' };
     }
 
+    const cleanTo = (options.to || '').trim();
+    if (!cleanTo || !cleanTo.includes('@')) {
+      return { success: false, isOAuth: false, error: `Dirección de correo de destino inválida: "${options.to}"` };
+    }
+
     const hasOAuth = Boolean(config.clientId && config.clientSecret && config.refreshToken);
     const useOAuth = config.provider === 'GMAIL_API' ? hasOAuth : false;
 
@@ -191,7 +196,7 @@ export class EmailService {
           // fallback
         }
 
-        // 1. Obtener access_token fresco desde Google OAuth2 vía HTTPS (Puerto 443 - Nunca bloqueado por Railway/Cloud)
+        // 1. Obtener access_token fresco desde Google OAuth2 vía HTTPS (Puerto 443)
         const tokenRes = await axios.post(
           'https://oauth2.googleapis.com/token',
           new URLSearchParams({
@@ -211,18 +216,50 @@ export class EmailService {
           throw new Error('Google no devolvió un access_token válido.');
         }
 
-        // 2. Compilar el correo RFC 2822
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const MailComposer = require('nodemailer/lib/mail-composer');
-        const mail = new MailComposer({
-          from: `"${config.senderName}" <${config.smtpUser}>`,
-          to: options.to,
-          subject: options.subject,
-          text: options.text,
-          html: options.html,
-        });
+        // 2. Compilar el correo RFC 2822 usando streamTransport oficial de Nodemailer
+        let rawBuffer: Buffer;
+        try {
+          const transporter = nodemailer.createTransport({
+            streamTransport: true,
+            newline: 'windows',
+            buffer: true,
+          });
+          const mailInfo = await transporter.sendMail({
+            from: `"${config.senderName}" <${config.smtpUser}>`,
+            to: cleanTo,
+            subject: options.subject,
+            text: options.text,
+            html: options.html,
+          });
+          rawBuffer = mailInfo.message as Buffer;
+        } catch (transportErr) {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const MailComposer = require('nodemailer/lib/mail-composer');
+            const mail = new MailComposer({
+              from: `"${config.senderName}" <${config.smtpUser}>`,
+              to: cleanTo,
+              subject: options.subject,
+              text: options.text,
+              html: options.html,
+            });
+            rawBuffer = await mail.compile().build();
+          } catch {
+            const utf8Subject = `=?utf-8?B?${Buffer.from(options.subject).toString('base64')}?=`;
+            const parts = [
+              `From: "${config.senderName}" <${config.smtpUser}>`,
+              `To: ${cleanTo}`,
+              `Subject: ${utf8Subject}`,
+              'MIME-Version: 1.0',
+              'Content-Type: text/html; charset=utf-8',
+              'Content-Transfer-Encoding: base64',
+              '',
+              Buffer.from(options.html).toString('base64'),
+            ];
+            rawBuffer = Buffer.from(parts.join('\r\n'));
+          }
+        }
 
-        const rawBuffer: Buffer = await mail.compile().build();
         const raw = rawBuffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
         // 3. Enviar vía Gmail REST API (HTTPS puerto 443)
@@ -238,7 +275,7 @@ export class EmailService {
           }
         );
 
-        console.log(`✅ [Gmail REST API] Correo enviado exitosamente a ${options.to} (MessageId: ${sendRes.data.id})`);
+        console.log(`✅ [Gmail REST API] Correo enviado exitosamente a ${cleanTo} (MessageId: ${sendRes.data.id})`);
 
         return {
           success: true,
@@ -247,6 +284,41 @@ export class EmailService {
         };
       } catch (oauthErr: any) {
         console.error('❌ [Gmail REST API] Error al enviar correo:', oauthErr.response?.data || oauthErr.message);
+
+        // Fallback a SMTP clásico si está configurada contraseña de aplicación
+        if (config.smtpPass) {
+          console.warn('⚠️ Intentando fallback vía SMTP clásico con contraseña de aplicación...');
+          try {
+            const cleanPassword = (config.smtpPass || '').replace(/\s+/g, '');
+            const fallbackTransporter = nodemailer.createTransport({
+              host: config.smtpHost,
+              port: config.smtpPort,
+              secure: config.smtpSecure,
+              auth: {
+                user: config.smtpUser,
+                pass: cleanPassword,
+              },
+            });
+
+            const fallbackInfo = await fallbackTransporter.sendMail({
+              from: `"${config.senderName}" <${config.smtpUser}>`,
+              to: cleanTo,
+              subject: options.subject,
+              text: options.text,
+              html: options.html,
+            });
+
+            console.log(`✅ [SMTP Fallback] Correo entregado exitosamente a ${cleanTo} (MessageId: ${fallbackInfo.messageId})`);
+            return {
+              success: true,
+              isOAuth: false,
+              messageId: fallbackInfo.messageId,
+            };
+          } catch (smtpErr: any) {
+            console.error('❌ [SMTP Fallback] También falló:', smtpErr.message);
+          }
+        }
+
         return {
           success: false,
           isOAuth: true,
@@ -255,7 +327,7 @@ export class EmailService {
       }
     }
 
-    // Fallback: SMTP clásico (en caso de que se configure un servidor SMTP propio)
+    // Fallback: SMTP clásico (en caso de que el proveedor sea SMTP)
     if (!config.smtpPass) {
       return { success: false, isOAuth: false, error: 'Falta configurar la contraseña de aplicación de Gmail.' };
     }
@@ -273,7 +345,7 @@ export class EmailService {
 
     const info = await transporter.sendMail({
       from: `"${config.senderName}" <${config.smtpUser}>`,
-      to: options.to,
+      to: cleanTo,
       subject: options.subject,
       text: options.text,
       html: options.html,

@@ -431,7 +431,7 @@ export class AdminController {
 
       res.json({
         success: true,
-        message: `Correo de confirmación de pago enviado exitosamente al correo registrado del ganador (${result.winnerEmail}).`,
+        message: `Comprobante de pago reenviado exitosamente al correo registrado en la base de datos (${result.winnerEmail}).`,
         result,
       });
     } catch (error: any) {
@@ -439,6 +439,29 @@ export class AdminController {
       res.status(400).json({
         success: false,
         message: error.message || 'Error al reenviar correo de confirmación de pago.',
+      });
+    }
+  }
+
+  /**
+   * Reenviar Correo de Notificación Oficial de Ganador para un sorteo
+   */
+  public static async resendWinnerEmail(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+
+      const result = await SorteoService.enviarNotificacionGanador(id);
+
+      res.json({
+        success: true,
+        message: `Notificación de ganador reenviada exitosamente al correo registrado en la base de datos (${result.winnerEmail}).`,
+        result,
+      });
+    } catch (error: any) {
+      console.error('Error en resendWinnerEmail:', error.message);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Error al reenviar notificación de ganador.',
       });
     }
   }

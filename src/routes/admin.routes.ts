@@ -42,5 +42,6 @@ router.get('/users', AdminController.getUsers);
 router.get('/sorteos', AdminController.getSorteos);
 router.post('/sorteos/:id/payout', AdminController.applyPayout);
 router.post('/sorteos/:id/resend-payout-email', AdminController.resendPayoutEmail);
+router.post('/sorteos/:id/resend-winner-email', AdminController.resendWinnerEmail);
 
 export default router;
