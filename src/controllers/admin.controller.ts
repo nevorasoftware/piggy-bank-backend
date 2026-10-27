@@ -85,6 +85,7 @@ export class AdminController {
 
   /**
    * CRUD Salas: Crear nueva sala de sorteo
+   * La duración en horas es parametrizable y determina dinámicamente la hora del sorteo.
    */
   public static async createRoom(req: Request, res: Response): Promise<void> {
     try {
@@ -93,17 +94,32 @@ export class AdminController {
         premio,
         costoPase,
         capacidadMax,
+        duracionHoras,
         horaApertura,
         horaSorteo,
+        estado,
       } = req.body;
 
-      if (!nombre || !premio || !costoPase || !capacidadMax || !horaApertura || !horaSorteo) {
+      if (!nombre || premio === undefined || costoPase === undefined || !capacidadMax) {
         res.status(400).json({
           success: false,
-          message: 'Todos los campos de la sala son obligatorios.',
+          message: 'Nombre, premio, costo del pase y capacidad máxima son obligatorios.',
         });
         return;
       }
+
+      const duracion = duracionHoras ? parseInt(duracionHoras, 10) : 2;
+      const now = new Date();
+
+      // Si no se provee horaApertura estática, se toma el momento actual
+      const apertura = horaApertura ? new Date(horaApertura) : now;
+
+      // Si no se provee horaSorteo estática, se calcula sumando la duración en horas parametrizada
+      const sorteo = horaSorteo
+        ? new Date(horaSorteo)
+        : new Date(apertura.getTime() + duracion * 3600 * 1000);
+
+      const roomEstado = estado ? (estado as RoomStatus) : RoomStatus.ABIERTA;
 
       const room = await prisma.room.create({
         data: {
@@ -111,9 +127,10 @@ export class AdminController {
           premio: Number(premio),
           costoPase: Number(costoPase),
           capacidadMax: parseInt(capacidadMax, 10),
-          horaApertura: new Date(horaApertura),
-          horaSorteo: new Date(horaSorteo),
-          estado: RoomStatus.ABIERTA,
+          duracionHoras: duracion,
+          horaApertura: apertura,
+          horaSorteo: sorteo,
+          estado: roomEstado,
         },
       });
 
@@ -131,6 +148,53 @@ export class AdminController {
   }
 
   /**
+   * Iniciar / Activar Sala en Tiempo Real:
+   * Abre la sala y calcula la hora del sorteo sumándole las horas parametrizadas al momento exacto actual.
+   */
+  public static async startRoom(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const { duracionHoras } = req.body;
+
+      const room = await prisma.room.findUnique({ where: { id } });
+      if (!room) {
+        res.status(404).json({ success: false, message: 'Sala no encontrada.' });
+        return;
+      }
+
+      if (room.estado === RoomStatus.FINALIZADA) {
+        res.status(400).json({ success: false, message: 'No se puede iniciar una sala que ya fue finalizada.' });
+        return;
+      }
+
+      const now = new Date();
+      const duracion = duracionHoras ? parseInt(duracionHoras, 10) : (room.duracionHoras || 2);
+      const nuevaHoraSorteo = new Date(now.getTime() + duracion * 3600 * 1000);
+
+      const updated = await prisma.room.update({
+        where: { id },
+        data: {
+          estado: RoomStatus.ABIERTA,
+          duracionHoras: duracion,
+          horaApertura: now,
+          horaSorteo: nuevaHoraSorteo,
+        },
+      });
+
+      broadcastRoomUpdate(updated.id, { room: updated, action: 'started' });
+
+      res.json({
+        success: true,
+        message: `¡Sala iniciada con éxito! Sorteo programado en ${duracion} hora(s) a las ${nuevaHoraSorteo.toLocaleTimeString('es-SV', { hour: '2-digit', minute: '2-digit' })}.`,
+        room: updated,
+      });
+    } catch (error) {
+      console.error('Error en startRoom:', error);
+      res.status(500).json({ success: false, message: 'Error al iniciar la sala.' });
+    }
+  }
+
+  /**
    * CRUD Salas: Actualizar sala existente
    */
   public static async updateRoom(req: Request, res: Response): Promise<void> {
@@ -141,10 +205,19 @@ export class AdminController {
         premio,
         costoPase,
         capacidadMax,
+        duracionHoras,
         horaApertura,
         horaSorteo,
         estado,
       } = req.body;
+
+      const duracion = duracionHoras !== undefined ? parseInt(duracionHoras, 10) : undefined;
+      let nuevaHoraSorteo = horaSorteo ? new Date(horaSorteo) : undefined;
+
+      // Si se actualiza duracionHoras y no se mandó horaSorteo manual
+      if (duracion !== undefined && !horaSorteo && horaApertura) {
+        nuevaHoraSorteo = new Date(new Date(horaApertura).getTime() + duracion * 3600 * 1000);
+      }
 
       const updated = await prisma.room.update({
         where: { id },
@@ -153,8 +226,9 @@ export class AdminController {
           premio: premio !== undefined ? Number(premio) : undefined,
           costoPase: costoPase !== undefined ? Number(costoPase) : undefined,
           capacidadMax: capacidadMax !== undefined ? parseInt(capacidadMax, 10) : undefined,
+          duracionHoras: duracion,
           horaApertura: horaApertura ? new Date(horaApertura) : undefined,
-          horaSorteo: horaSorteo ? new Date(horaSorteo) : undefined,
+          horaSorteo: nuevaHoraSorteo,
           estado: estado ? (estado as RoomStatus) : undefined,
         },
       });

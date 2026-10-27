@@ -16,6 +16,7 @@ router.get('/rooms', AdminController.listAllRooms);
 router.post('/rooms', AdminController.createRoom);
 router.put('/rooms/:id', AdminController.updateRoom);
 router.delete('/rooms/:id', AdminController.deleteRoom);
+router.post('/rooms/:id/start', AdminController.startRoom);
 router.post('/rooms/:id/draw', AdminController.triggerRoomDraw);
 
 // Reglas Parametrizables de Participación (GameConfig: 6/3)

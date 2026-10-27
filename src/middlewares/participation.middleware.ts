@@ -20,6 +20,26 @@ export interface ParticipationValidationResult {
  * Se ejecuta tanto antes de iniciar checkout en Wompi como en el procesamiento del Webhook.
  */
 export async function puedeParticipar(userId: string): Promise<ParticipationValidationResult> {
+  // 0. Los administradores no pueden adquirir pases ni participar en los sorteos
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+
+  if (user?.role === 'ADMIN') {
+    return {
+      allowed: false,
+      reason: 'Los administradores no pueden adquirir pases ni participar en sorteos. Tu cuenta tiene acceso exclusivo para gestión de salas y verificación de pagos.',
+      stats: {
+        participaciones: 0,
+        victorias: 0,
+        maxParticipaciones: 0,
+        maxVictorias: 0,
+        fecha: getElSalvadorDateString(),
+      },
+    };
+  }
+
   // 1. Obtener configuración global de juego
   let config = await prisma.gameConfig.findFirst({
     where: { id: 1 },

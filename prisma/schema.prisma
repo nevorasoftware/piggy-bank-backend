@@ -91,16 +91,17 @@ model BankAccount {
 }
 
 model Room {
-  id            String        @id @default(uuid())
-  nombre        String
-  premio        Decimal       @db.Decimal(10, 2)
-  costoPase     Decimal       @db.Decimal(10, 2)
-  capacidadMax  Int
-  horaApertura  DateTime
-  horaSorteo    DateTime
-  estado        RoomStatus    @default(ABIERTA)
-  ticketsSold   Int           @default(0)
-  winnerUserId  String?
+  id             String        @id @default(uuid())
+  nombre         String
+  premio         Decimal       @db.Decimal(10, 2)
+  costoPase      Decimal       @db.Decimal(10, 2)
+  capacidadMax   Int
+  duracionHoras  Int           @default(2) // Duración parametrizada en horas
+  horaApertura   DateTime      @default(now())
+  horaSorteo     DateTime
+  estado         RoomStatus    @default(ABIERTA)
+  ticketsSold    Int           @default(0)
+  winnerUserId   String?
   winnerTicketId String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt

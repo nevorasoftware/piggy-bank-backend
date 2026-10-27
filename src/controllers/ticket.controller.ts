@@ -10,6 +10,14 @@ export class TicketController {
    */
   public static async initiateCheckout(req: AuthRequest, res: Response): Promise<void> {
     try {
+      if (req.user?.role === 'ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Los administradores no pueden adquirir pases ni participar en sorteos. Tu rol es exclusivo para gestión de salas y pagos.',
+        });
+        return;
+      }
+
       const userId = req.user!.id;
       const { roomId } = req.body;
 
@@ -39,6 +47,16 @@ export class TicketController {
    */
   public static async getMyPassForRoom(req: AuthRequest, res: Response): Promise<void> {
     try {
+      if (req.user?.role === 'ADMIN') {
+        res.json({
+          success: true,
+          ticket: null,
+          isAdmin: true,
+          message: 'La cuenta de administrador no participa en sorteos ni posee pases.',
+        });
+        return;
+      }
+
       const userId = req.user!.id;
       const { roomId } = req.params;
 
@@ -75,6 +93,14 @@ export class TicketController {
    */
   public static async payWithCard(req: AuthRequest, res: Response): Promise<void> {
     try {
+      if (req.user?.role === 'ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Los administradores no pueden adquirir pases ni participar en sorteos. Tu rol es exclusivo para gestión de salas y pagos.',
+        });
+        return;
+      }
+
       const userId = req.user!.id;
       const { roomId, cardData } = req.body;
 

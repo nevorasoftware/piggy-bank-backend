@@ -7,7 +7,7 @@ import { ENV } from '../config/env';
 import { validateDUI } from '../utils/dui.validator';
 import { WhatsAppService } from '../services/whatsapp.service';
 import { AuthRequest } from '../middlewares/auth.middleware';
-import { VerificationType } from '@prisma/client';
+import { VerificationType, Role } from '@prisma/client';
 
 export class AuthController {
   /**
@@ -60,7 +60,7 @@ export class AuthController {
       // Hashear contraseña
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      // Crear usuario
+      // Crear usuario (Por defecto siempre jugadores)
       const newUser = await prisma.user.create({
         data: {
           fullName,
@@ -68,6 +68,7 @@ export class AuthController {
           phone,
           dui,
           password: hashedPassword,
+          role: Role.USER,
         },
       });
 
