@@ -348,4 +348,196 @@ export class AuthController {
       res.status(500).json({ success: false, message: 'Error interno en perfil.' });
     }
   }
+
+  /**
+   * Solicitar recuperación de contraseña (envía OTP al correo registrado)
+   */
+  public static async forgotPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { email } = req.body;
+
+      if (!email || typeof email !== 'string') {
+        res.status(400).json({ success: false, message: 'Por favor ingresa tu correo electrónico.' });
+        return;
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+
+      const user = await prisma.user.findFirst({
+        where: {
+          email: { equals: cleanEmail, mode: 'insensitive' },
+        },
+      });
+
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: 'No encontramos ninguna cuenta registrada con este correo electrónico.',
+        });
+        return;
+      }
+
+      // Invalidar códigos anteriores no usados para este correo
+      await prisma.verificationCode.updateMany({
+        where: {
+          identifier: user.email,
+          used: false,
+        },
+        data: { used: true },
+      });
+
+      // Generar código OTP de 6 dígitos
+      const otpCode = crypto.randomInt(100000, 999999).toString();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
+
+      await prisma.verificationCode.create({
+        data: {
+          userId: user.id,
+          identifier: user.email,
+          type: VerificationType.EMAIL,
+          code: otpCode,
+          expiresAt,
+        },
+      });
+
+      // Enviar correo con el código OTP
+      await EmailService.sendPasswordResetOtpEmail(user.email, otpCode, user.fullName);
+
+      res.json({
+        success: true,
+        message: `Hemos enviado un código de seguridad de 6 dígitos a ${user.email}.`,
+      });
+    } catch (error) {
+      console.error('Error en forgotPassword:', error);
+      res.status(500).json({ success: false, message: 'Error interno al procesar recuperación de contraseña.' });
+    }
+  }
+
+  /**
+   * Validar código OTP para recuperación de contraseña
+   */
+  public static async verifyResetOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, code } = req.body;
+
+      if (!email || !code) {
+        res.status(400).json({ success: false, message: 'Correo y código de verificación son requeridos.' });
+        return;
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanCode = code.toString().trim();
+
+      const record = await prisma.verificationCode.findFirst({
+        where: {
+          identifier: cleanEmail,
+          code: cleanCode,
+          used: false,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!record) {
+        res.status(400).json({
+          success: false,
+          message: 'Código de verificación incorrecto o expirado. Solicita un nuevo código.',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Código verificado con éxito. Procede a ingresar tu nueva contraseña.',
+      });
+    } catch (error) {
+      console.error('Error en verifyResetOtp:', error);
+      res.status(500).json({ success: false, message: 'Error interno al validar código.' });
+    }
+  }
+
+  /**
+   * Restablecer la nueva contraseña tras validar el código OTP
+   */
+  public static async resetPassword(req: Request, res: Response): Promise<void> {
+    try {
+      const { email, code, newPassword } = req.body;
+
+      if (!email || !code || !newPassword) {
+        res.status(400).json({
+          success: false,
+          message: 'Correo, código y nueva contraseña son obligatorios.',
+        });
+        return;
+      }
+
+      if (newPassword.length < 6) {
+        res.status(400).json({
+          success: false,
+          message: 'La nueva contraseña debe tener al menos 6 caracteres.',
+        });
+        return;
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanCode = code.toString().trim();
+
+      // Verificar que el código sea válido y no haya sido usado
+      const record = await prisma.verificationCode.findFirst({
+        where: {
+          identifier: cleanEmail,
+          code: cleanCode,
+          used: false,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (!record) {
+        res.status(400).json({
+          success: false,
+          message: 'El código de verificación ha expirado o ya fue utilizado.',
+        });
+        return;
+      }
+
+      const user = await prisma.user.findFirst({
+        where: { email: { equals: cleanEmail, mode: 'insensitive' } },
+      });
+
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
+        return;
+      }
+
+      // Hashear nueva contraseña
+      const hashedPassword = await bcrypt.hash(newPassword.trim(), 10);
+
+      // Actualizar contraseña del usuario
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { password: hashedPassword },
+      });
+
+      // Marcar código como usado
+      await prisma.verificationCode.update({
+        where: { id: record.id },
+        data: { used: true },
+      });
+
+      // Notificar por correo que la contraseña fue cambiada
+      EmailService.sendPasswordChangedNotificationEmail(user.email, user.fullName).catch((err) =>
+        console.error('Error al enviar notificación de contraseña cambiada:', err)
+      );
+
+      res.json({
+        success: true,
+        message: '¡Tu contraseña ha sido restablecida exitosamente! Ya puedes iniciar sesión con tu nueva contraseña.',
+      });
+    } catch (error) {
+      console.error('Error en resetPassword:', error);
+      res.status(500).json({ success: false, message: 'Error interno al restablecer la contraseña.' });
+    }
+  }
 }
+

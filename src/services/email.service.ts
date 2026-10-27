@@ -736,4 +736,214 @@ export class EmailService {
       return { success: false, error: error.message };
     }
   }
+
+  /**
+   * Envía el correo con el código OTP para recuperación de contraseña
+   */
+  public static async sendPasswordResetOtpEmail(
+    toEmail: string,
+    code: string,
+    fullName?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    console.log(`\n======================================================`);
+    console.log(`🔑 [PiggyBank Reset Password OTP] Para: ${toEmail} | Código: ${code}`);
+    console.log(`======================================================\n`);
+
+    try {
+      const nombreDisplay = fullName ? fullName.split(' ')[0] : 'Jugador';
+
+      const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recuperación de Contraseña - PiggyBank</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #070a12; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #070a12; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 540px; background: linear-gradient(180deg, #1e1b4b 0%, #0b1120 100%); border-radius: 28px; border: 1px solid rgba(250, 204, 21, 0.3); overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);">
+          
+          <!-- Encabezado con Logo y Gradiente -->
+          <tr>
+            <td align="center" style="padding: 40px 30px 20px 30px; background: linear-gradient(135deg, rgba(234, 179, 8, 0.2) 0%, rgba(147, 51, 234, 0.15) 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="font-size: 52px; line-height: 1; margin-bottom: 12px;">🔑</div>
+              <h1 style="margin: 0; font-size: 24px; font-weight: 900; letter-spacing: -0.5px; color: #ffffff;">
+                Recuperación de Contraseña
+              </h1>
+              <p style="margin: 6px 0 0 0; font-size: 13px; color: #cbd5e1; font-weight: 500;">
+                PiggyBank El Salvador • Seguridad de Cuenta
+              </p>
+            </td>
+          </tr>
+
+          <!-- Cuerpo del Mensaje -->
+          <tr>
+            <td style="padding: 35px 35px 25px 35px; text-align: center;">
+              <h2 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 800; color: #f8fafc;">
+                ¡Hola, ${nombreDisplay}!
+              </h2>
+              <p style="margin: 0 0 25px 0; font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+                Recibimos una solicitud para restablecer la contraseña de tu cuenta en PiggyBank. Para crear una nueva contraseña, ingresa este código de verificación:
+              </p>
+
+              <!-- Tarjeta del Código OTP -->
+              <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center">
+                    <div style="display: inline-block; background: #020617; border: 2px dashed #f59e0b; border-radius: 18px; padding: 18px 36px; margin: 10px 0 20px 0;">
+                      <span style="font-family: 'Courier New', Courier, monospace; font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #fbbf24; text-shadow: 0 0 12px rgba(251, 191, 36, 0.4);">
+                        ${code}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin: 0 0 16px 0; font-size: 12px; color: #94a3b8;">
+                ⏰ Este código es válido durante los próximos <strong style="color: #f8fafc;">10 minutos</strong>.
+              </p>
+              <div style="background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.2); border-radius: 12px; padding: 12px 16px; margin-top: 15px; font-size: 12px; color: #fda4af; text-align: left;">
+                🛡️ <strong>Aviso de Seguridad:</strong> Si no solicitaste este cambio de contraseña, ignora este mensaje. Nadie puede acceder a tu cuenta sin este código.
+              </div>
+            </td>
+          </tr>
+
+          <!-- Pie de Página -->
+          <tr>
+            <td style="padding: 24px 35px; background: rgba(0, 0, 0, 0.3); border-top: 1px solid rgba(255, 255, 255, 0.05); text-align: center;">
+              <p style="margin: 0; font-size: 11px; color: #64748b;">
+                PiggyBank El Salvador • Transacciones y cuentas protegidas
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+      `;
+
+      return await this.sendMail({
+        to: toEmail,
+        subject: `🐷🔑 Tu código de recuperación de contraseña PiggyBank: ${code}`,
+        text: `¡Hola ${nombreDisplay}!\n\nTu código para restablecer tu contraseña en PiggyBank es: ${code}\n\nEs válido durante 10 minutos. Si no solicitaste este cambio, puedes ignorar este correo.\n\nPiggyBank El Salvador`,
+        html: htmlContent,
+      });
+    } catch (error: any) {
+      console.error('Error al enviar código de recuperación de contraseña:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Notifica al usuario que su contraseña ha sido cambiada exitosamente
+   */
+  public static async sendPasswordChangedNotificationEmail(
+    toEmail: string,
+    fullName?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
+    console.log(`\n======================================================`);
+    console.log(`🔒 [PiggyBank Password Changed Notice] Para: ${toEmail}`);
+    console.log(`======================================================\n`);
+
+    try {
+      const nombreDisplay = fullName ? fullName.split(' ')[0] : 'Jugador';
+      const fechaHora = new Date().toLocaleString('es-SV', {
+        timeZone: 'America/El_Salvador',
+        dateStyle: 'full',
+        timeStyle: 'medium',
+      });
+
+      const htmlContent = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contraseña Actualizada - PiggyBank</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #070a12; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff;">
+  <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #070a12; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 540px; background: linear-gradient(180deg, #064e3b 0%, #0b1120 100%); border-radius: 28px; border: 1px solid rgba(16, 185, 129, 0.4); overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);">
+          
+          <!-- Encabezado -->
+          <tr>
+            <td align="center" style="padding: 40px 30px 20px 30px; background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(6, 78, 59, 0.3) 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.08);">
+              <div style="font-size: 52px; line-height: 1; margin-bottom: 12px;">🔒</div>
+              <h1 style="margin: 0; font-size: 24px; font-weight: 900; color: #ffffff;">
+                Contraseña Actualizada
+              </h1>
+              <p style="margin: 6px 0 0 0; font-size: 13px; color: #a7f3d0; font-weight: 500;">
+                PiggyBank El Salvador • Notificación de Seguridad
+              </p>
+            </td>
+          </tr>
+
+          <!-- Cuerpo -->
+          <tr>
+            <td style="padding: 35px 35px 25px 35px; text-align: center;">
+              <h2 style="margin: 0 0 12px 0; font-size: 20px; font-weight: 800; color: #f8fafc;">
+                ¡Hola, ${nombreDisplay}!
+              </h2>
+              <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #cbd5e1;">
+                Te confirmamos que la contraseña de tu cuenta de PiggyBank ha sido cambiada exitosamente el:
+              </p>
+
+              <div style="background: #020617; border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 14px; padding: 14px; margin-bottom: 25px; color: #34d399; font-size: 13px; font-weight: bold;">
+                📅 ${fechaHora} (El Salvador)
+              </div>
+
+              <div style="background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.3); border-radius: 14px; padding: 16px; text-align: left; font-size: 12px; color: #fef08a; margin-bottom: 25px;">
+                ⚠️ <strong>¿No fuiste tú?</strong> Si no realizaste este cambio, ponte en contacto de inmediato con nuestro equipo de soporte para bloquear y asegurar tu cuenta.
+              </div>
+
+              <!-- Botón Iniciar Sesión -->
+              <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center" style="border-radius: 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+                    <a href="https://piggybank.up.railway.app/auth/login" target="_blank" style="font-size: 14px; font-weight: 900; color: #ffffff; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
+                      Iniciar Sesión en PiggyBank ➜
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Pie -->
+          <tr>
+            <td style="padding: 24px 35px; background: rgba(0, 0, 0, 0.3); border-top: 1px solid rgba(255, 255, 255, 0.05); text-align: center;">
+              <p style="margin: 0; font-size: 11px; color: #64748b;">
+                PiggyBank El Salvador • Notificación automática de seguridad de cuenta
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+      `;
+
+      return await this.sendMail({
+        to: toEmail,
+        subject: `🐷🔒 Tu contraseña de PiggyBank ha sido actualizada exitosamente`,
+        text: `¡Hola ${nombreDisplay}!\n\nConfirmamos que la contraseña de tu cuenta PiggyBank fue cambiada exitosamente el ${fechaHora}.\n\nSi no fuiste tú, contacta inmediatamente a soporte.\n\nPiggyBank El Salvador`,
+        html: htmlContent,
+      });
+    } catch (error: any) {
+      console.error('Error al enviar notificación de contraseña cambiada:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
+
