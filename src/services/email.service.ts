@@ -1,12 +1,17 @@
 import nodemailer from 'nodemailer';
+import axios from 'axios';
 import { prisma } from '../config/database';
 
 export interface EmailConfigData {
+  provider: string; // 'GMAIL_API' | 'SMTP'
   smtpHost: string;
   smtpPort: number;
   smtpSecure: boolean;
   smtpUser: string;
   smtpPass: string;
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
   senderName: string;
   isActive: boolean;
 }
@@ -25,11 +30,15 @@ export class EmailService {
         config = await prisma.emailConfig.create({
           data: {
             id: 1,
+            provider: 'GMAIL_API',
             smtpHost: 'smtp.gmail.com',
             smtpPort: 465,
             smtpSecure: true,
             smtpUser: 'piggybanksv@gmail.com',
             smtpPass: '',
+            clientId: '',
+            clientSecret: '',
+            refreshToken: '',
             senderName: 'PiggyBank El Salvador',
             isActive: true,
           },
@@ -37,22 +46,30 @@ export class EmailService {
       }
 
       return {
+        provider: config.provider || 'GMAIL_API',
         smtpHost: config.smtpHost,
         smtpPort: config.smtpPort,
         smtpSecure: config.smtpSecure,
         smtpUser: config.smtpUser,
         smtpPass: config.smtpPass,
+        clientId: config.clientId || '',
+        clientSecret: config.clientSecret || '',
+        refreshToken: config.refreshToken || '',
         senderName: config.senderName,
         isActive: config.isActive,
       };
     } catch (error) {
       console.error('Error al obtener EmailConfig de la BD, usando valores por defecto:', error);
       return {
+        provider: 'GMAIL_API',
         smtpHost: 'smtp.gmail.com',
         smtpPort: 465,
         smtpSecure: true,
         smtpUser: 'piggybanksv@gmail.com',
         smtpPass: '',
+        clientId: '',
+        clientSecret: '',
+        refreshToken: '',
         senderName: 'PiggyBank El Salvador',
         isActive: true,
       };
@@ -60,18 +77,85 @@ export class EmailService {
   }
 
   /**
-   * Crea un transporter de nodemailer según la configuración de la BD
+   * Genera la URL de autorización para el consentimiento de Google Cloud Console (OAuth2)
+   */
+  public static getOAuthAuthorizationUrl(clientId: string, redirectUri: string): string {
+    const rootUrl = 'https://accounts.google.com/o/oauth2/v2/auth';
+    const params = new URLSearchParams({
+      client_id: clientId.trim(),
+      redirect_uri: redirectUri.trim(),
+      response_type: 'code',
+      access_type: 'offline',
+      prompt: 'consent',
+      scope: 'https://mail.google.com/ https://www.googleapis.com/auth/gmail.send',
+    });
+    return `${rootUrl}?${params.toString()}`;
+  }
+
+  /**
+   * Intercambia el código de autorización por tokens con Google OAuth2
+   */
+  public static async exchangeCodeForTokens(
+    code: string,
+    clientId: string,
+    clientSecret: string,
+    redirectUri: string
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const res = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      new URLSearchParams({
+        code: code.trim(),
+        client_id: clientId.trim(),
+        client_secret: clientSecret.trim(),
+        redirect_uri: redirectUri.trim(),
+        grant_type: 'authorization_code',
+      }).toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    );
+
+    return {
+      accessToken: res.data.access_token,
+      refreshToken: res.data.refresh_token,
+    };
+  }
+
+  /**
+   * Crea un transporter de nodemailer según la configuración (Gmail API OAuth2 o SMTP App Password)
    */
   private static async createTransporter() {
     const config = await this.getEmailConfig();
-    const cleanPassword = (config.smtpPass || '').replace(/\s+/g, '');
+    const hasOAuth = Boolean(config.clientId && config.clientSecret && config.refreshToken);
+    const useOAuth = config.provider === 'GMAIL_API' ? hasOAuth : false;
 
+    if (useOAuth) {
+      return {
+        config,
+        isOAuth: true,
+        transporter: nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            type: 'OAuth2',
+            user: config.smtpUser,
+            clientId: config.clientId.trim(),
+            clientSecret: config.clientSecret.trim(),
+            refreshToken: config.refreshToken.trim(),
+          },
+        }),
+      };
+    }
+
+    const cleanPassword = (config.smtpPass || '').replace(/\s+/g, '');
     return {
       config,
+      isOAuth: false,
       transporter: nodemailer.createTransport({
         host: config.smtpHost,
         port: config.smtpPort,
-        secure: config.smtpSecure, // true para puerto 465, false para 587
+        secure: config.smtpSecure,
         auth: {
           user: config.smtpUser,
           pass: cleanPassword,
@@ -93,18 +177,26 @@ export class EmailService {
     console.log(`======================================================\n`);
 
     try {
-      const { config, transporter } = await this.createTransporter();
+      const { config, transporter, isOAuth } = await this.createTransporter();
 
       if (!config.isActive) {
         console.warn('⚠️ El servicio de email está desactivado en la configuración.');
         return { success: false, error: 'Servicio de email desactivado.' };
       }
 
-      if (!config.smtpPass) {
-        console.warn('⚠️ No se ha configurado la Contraseña de Aplicación de Gmail en el panel admin.');
+      if (config.provider === 'GMAIL_API' && (!config.clientId || !config.refreshToken)) {
+        console.warn('⚠️ Falta configurar Client ID / Refresh Token de Gmail API en el panel admin.');
         return {
           success: false,
-          error: 'Falta configurar el token/contraseña de aplicación de Gmail en el panel de administración.',
+          error: 'Falta parametrizar el Client ID y Refresh Token de Gmail API en el panel de administración.',
+        };
+      }
+
+      if (config.provider === 'SMTP' && !config.smtpPass) {
+        console.warn('⚠️ No se ha configurado la contraseña de aplicación de Gmail.');
+        return {
+          success: false,
+          error: 'Falta configurar la contraseña de aplicación de Gmail en el panel admin.',
         };
       }
 
@@ -177,7 +269,7 @@ export class EmailService {
                 PiggyBank El Salvador • Transacciones protegidas por Visa, Mastercard y 3D Secure
               </p>
               <p style="margin: 0; font-size: 11px; color: #475569;">
-                Enviado desde <a href="mailto:${config.smtpUser}" style="color: #94a3b8; text-decoration: none;">${config.smtpUser}</a>
+                Enviado vía ${isOAuth ? 'Gmail API OAuth2' : 'SMTP'} desde <a href="mailto:${config.smtpUser}" style="color: #94a3b8; text-decoration: none;">${config.smtpUser}</a>
               </p>
             </td>
           </tr>
@@ -204,29 +296,37 @@ export class EmailService {
       console.error('❌ Error al enviar correo de verificación:', error);
       return {
         success: false,
-        error: error.message || 'Error desconocido al enviar correo vía Gmail SMTP.',
+        error: error.message || 'Error al enviar correo vía Google Gmail API.',
       };
     }
   }
 
   /**
-   * Prueba la conexión SMTP y envía un correo de diagnóstico
+   * Prueba la conexión y envía un correo de diagnóstico
    */
   public static async testConnection(
     targetEmail?: string
   ): Promise<{ success: boolean; message: string; details?: any }> {
     try {
-      const { config, transporter } = await this.createTransporter();
+      const { config, transporter, isOAuth } = await this.createTransporter();
 
-      if (!config.smtpPass) {
+      if (config.provider === 'GMAIL_API' && (!config.clientId || !config.refreshToken)) {
         return {
           success: false,
           message:
-            'No hay Contraseña de Aplicación de Gmail configurada. Por favor ingresa el token de 16 caracteres.',
+            'Falta configurar el Client ID y el Refresh Token de la consola de Google (Gmail API). Por favor completa esos campos.',
         };
       }
 
-      // 1. Verificar credenciales con el servidor SMTP
+      if (config.provider === 'SMTP' && !config.smtpPass) {
+        return {
+          success: false,
+          message:
+            'Falta configurar la Contraseña de Aplicación de Gmail. Por favor ingresa el token de 16 caracteres.',
+        };
+      }
+
+      // 1. Verificar credenciales con el servidor
       await transporter.verify();
 
       // 2. Enviar correo de prueba
@@ -234,12 +334,12 @@ export class EmailService {
       const testInfo = await transporter.sendMail({
         from: `"${config.senderName}" <${config.smtpUser}>`,
         to: recipient,
-        subject: '🧪 Prueba de Conexión Exitosa - PiggyBank SMTP',
+        subject: '🧪 Prueba de Conexión Exitosa - PiggyBank Gmail API',
         html: `
           <div style="font-family: sans-serif; background: #0f172a; color: #ffffff; padding: 30px; border-radius: 16px;">
-            <h2 style="color: #22c55e;">✅ Conexión SMTP Exitosa</h2>
-            <p>La configuración de correo para <strong>${config.smtpUser}</strong> está funcionando perfectamente.</p>
-            <p style="font-size: 12px; color: #94a3b8;">Servidor: ${config.smtpHost}:${config.smtpPort} (SSL: ${config.smtpSecure ? 'Sí' : 'No'})</p>
+            <h2 style="color: #22c55e;">✅ Conexión con Gmail API Exitosa</h2>
+            <p>La autenticación con Google Cloud Console para <strong>${config.smtpUser}</strong> está funcionando perfectamente.</p>
+            <p style="font-size: 12px; color: #94a3b8;">Método: ${isOAuth ? 'Google Cloud OAuth2 (Gmail API)' : 'SMTP App Password'}</p>
             <p style="font-size: 12px; color: #f59e0b;">PiggyBank El Salvador - Notificaciones en tiempo real</p>
           </div>
         `,
@@ -247,15 +347,18 @@ export class EmailService {
 
       return {
         success: true,
-        message: `Conexión con Gmail SMTP verificada y correo de prueba enviado exitosamente a ${recipient}.`,
-        details: { messageId: testInfo.messageId, recipient },
+        message: `Conexión con Google Gmail API (${isOAuth ? 'OAuth2' : 'SMTP'}) verificada y correo de prueba enviado exitosamente a ${recipient}.`,
+        details: { messageId: testInfo.messageId, recipient, method: isOAuth ? 'OAuth2' : 'SMTP' },
       };
     } catch (error: any) {
-      console.error('Error al probar conexión SMTP:', error);
-      let errorMsg = error.message || 'Error al conectar con el servidor SMTP.';
-      if (errorMsg.includes('Invalid login') || errorMsg.includes('535-5.7.8')) {
+      console.error('Error al probar conexión con Gmail API:', error);
+      let errorMsg = error.message || 'Error al conectar con Google Gmail API.';
+      if (errorMsg.includes('invalid_grant')) {
         errorMsg =
-          'Error de autenticación en Gmail. Verifica que hayas generado una "Contraseña de Aplicación" de 16 caracteres en myaccount.google.com/apppasswords y no tu contraseña personal regular.';
+          'Google rechazó el Refresh Token (invalid_grant). El token expiró o fue revocado. Vuelve a autorizar la app en Google Cloud Console.';
+      } else if (errorMsg.includes('invalid_client')) {
+        errorMsg =
+          'Client ID o Client Secret incorrectos de Google Cloud Console (invalid_client). Verifica que coincidan exactamente con tu proyecto de Google Cloud.';
       }
       return {
         success: false,

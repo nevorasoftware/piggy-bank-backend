@@ -539,30 +539,40 @@ export class AdminController {
   }
 
   /**
-   * Configuración de Correo Electrónico (Gmail SMTP / Verificación): Obtener parámetros
+   * Configuración de Correo Electrónico (Gmail API / SMTP): Obtener parámetros
    */
   public static async getEmailConfig(req: Request, res: Response): Promise<void> {
     try {
       const config = await EmailService.getEmailConfig();
       const reveal = req.query.reveal === 'true';
 
-      const maskedPass = config.smtpPass
-        ? config.smtpPass.length > 4
-          ? '••••••••••••' + config.smtpPass.slice(-4)
-          : '••••••••'
-        : '';
+      const mask = (val: string) => {
+        if (!val) return '';
+        if (val.length <= 4) return '••••';
+        return '••••••••••••' + val.slice(-4);
+      };
 
       res.json({
         success: true,
         config: {
+          provider: config.provider,
           smtpHost: config.smtpHost,
           smtpPort: config.smtpPort,
           smtpSecure: config.smtpSecure,
           smtpUser: config.smtpUser,
           senderName: config.senderName,
           isActive: config.isActive,
+          // Google Cloud Console OAuth2 fields:
+          clientId: config.clientId,
+          hasClientSecret: Boolean(config.clientSecret),
+          maskedClientSecret: mask(config.clientSecret),
+          clientSecret: reveal ? config.clientSecret : undefined,
+          hasRefreshToken: Boolean(config.refreshToken),
+          maskedRefreshToken: mask(config.refreshToken),
+          refreshToken: reveal ? config.refreshToken : undefined,
+          // SMTP App Password fallback:
           hasPass: Boolean(config.smtpPass),
-          maskedPass,
+          maskedPass: mask(config.smtpPass),
           smtpPass: reveal ? config.smtpPass : undefined,
         },
       });
@@ -577,7 +587,19 @@ export class AdminController {
    */
   public static async updateEmailConfig(req: Request, res: Response): Promise<void> {
     try {
-      const { smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, senderName, isActive } = req.body;
+      const {
+        provider,
+        smtpHost,
+        smtpPort,
+        smtpSecure,
+        smtpUser,
+        smtpPass,
+        clientId,
+        clientSecret,
+        refreshToken,
+        senderName,
+        isActive,
+      } = req.body;
 
       if (!smtpUser) {
         res.status(400).json({ success: false, message: 'El correo remitente es requerido.' });
@@ -585,29 +607,48 @@ export class AdminController {
       }
 
       const current = await EmailService.getEmailConfig();
+
       let newPass = current.smtpPass;
       if (smtpPass && typeof smtpPass === 'string' && !smtpPass.includes('••••')) {
         newPass = smtpPass.trim();
       }
 
+      let newClientSecret = current.clientSecret;
+      if (clientSecret && typeof clientSecret === 'string' && !clientSecret.includes('••••')) {
+        newClientSecret = clientSecret.trim();
+      }
+
+      let newRefreshToken = current.refreshToken;
+      if (refreshToken && typeof refreshToken === 'string' && !refreshToken.includes('••••')) {
+        newRefreshToken = refreshToken.trim();
+      }
+
       const updated = await prisma.emailConfig.upsert({
         where: { id: 1 },
         update: {
+          provider: provider ? provider.trim() : 'GMAIL_API',
           smtpHost: smtpHost ? smtpHost.trim() : 'smtp.gmail.com',
           smtpPort: smtpPort ? parseInt(smtpPort, 10) : 465,
           smtpSecure: smtpSecure !== undefined ? Boolean(smtpSecure) : true,
           smtpUser: smtpUser.trim(),
           smtpPass: newPass,
+          clientId: clientId !== undefined ? clientId.trim() : current.clientId,
+          clientSecret: newClientSecret,
+          refreshToken: newRefreshToken,
           senderName: senderName ? senderName.trim() : 'PiggyBank El Salvador',
           isActive: isActive !== undefined ? Boolean(isActive) : true,
         },
         create: {
           id: 1,
+          provider: provider ? provider.trim() : 'GMAIL_API',
           smtpHost: smtpHost ? smtpHost.trim() : 'smtp.gmail.com',
           smtpPort: smtpPort ? parseInt(smtpPort, 10) : 465,
           smtpSecure: smtpSecure !== undefined ? Boolean(smtpSecure) : true,
           smtpUser: smtpUser.trim(),
           smtpPass: newPass,
+          clientId: clientId !== undefined ? clientId.trim() : '',
+          clientSecret: newClientSecret,
+          refreshToken: newRefreshToken,
           senderName: senderName ? senderName.trim() : 'PiggyBank El Salvador',
           isActive: isActive !== undefined ? Boolean(isActive) : true,
         },
@@ -615,16 +656,19 @@ export class AdminController {
 
       res.json({
         success: true,
-        message: 'Configuración de correo guardada exitosamente.',
+        message: 'Configuración de Gmail API guardada exitosamente en la base de datos.',
         config: {
+          provider: updated.provider,
           smtpHost: updated.smtpHost,
           smtpPort: updated.smtpPort,
           smtpSecure: updated.smtpSecure,
           smtpUser: updated.smtpUser,
           senderName: updated.senderName,
           isActive: updated.isActive,
+          clientId: updated.clientId,
+          hasClientSecret: Boolean(updated.clientSecret),
+          hasRefreshToken: Boolean(updated.refreshToken),
           hasPass: Boolean(updated.smtpPass),
-          maskedPass: updated.smtpPass ? '••••••••••••' + updated.smtpPass.slice(-4) : '',
         },
       });
     } catch (error) {
@@ -634,7 +678,87 @@ export class AdminController {
   }
 
   /**
-   * Probar conexión SMTP y enviar correo de diagnóstico
+   * Obtener URL de autorización de Google OAuth2
+   */
+  public static async getGoogleOAuthUrl(req: Request, res: Response): Promise<void> {
+    try {
+      const config = await EmailService.getEmailConfig();
+      const redirectUri =
+        (req.query.redirectUri as string) ||
+        `${req.protocol}://${req.get('host')}/api/admin/email-config/oauth/callback`;
+
+      if (!config.clientId) {
+        res.status(400).json({
+          success: false,
+          message: 'Primero debes ingresar y guardar el Client ID de Google Cloud Console.',
+        });
+        return;
+      }
+
+      const url = EmailService.getOAuthAuthorizationUrl(config.clientId, redirectUri);
+      res.json({ success: true, url, redirectUri });
+    } catch (error: any) {
+      console.error('Error en getGoogleOAuthUrl:', error);
+      res.status(500).json({ success: false, message: error.message || 'Error al generar URL OAuth.' });
+    }
+  }
+
+  /**
+   * Intercambiar código de Google por Refresh Token
+   */
+  public static async exchangeGoogleOAuthCode(req: Request, res: Response): Promise<void> {
+    try {
+      const { code, redirectUri } = req.body;
+      const config = await EmailService.getEmailConfig();
+
+      if (!code) {
+        res.status(400).json({ success: false, message: 'El código de autorización es requerido.' });
+        return;
+      }
+
+      if (!config.clientId || !config.clientSecret) {
+        res.status(400).json({ success: false, message: 'Falta configurar Client ID o Client Secret.' });
+        return;
+      }
+
+      const defaultRedirectUri = redirectUri || 'https://developers.google.com/oauthplayground';
+      const tokens = await EmailService.exchangeCodeForTokens(
+        code,
+        config.clientId,
+        config.clientSecret,
+        defaultRedirectUri
+      );
+
+      if (!tokens.refreshToken) {
+        res.status(400).json({
+          success: false,
+          message: 'Google no devolvió un refresh_token. Asegúrate de incluir prompt=consent en la autorización.',
+        });
+        return;
+      }
+
+      await prisma.emailConfig.update({
+        where: { id: 1 },
+        data: {
+          refreshToken: tokens.refreshToken,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: '¡Refresh Token de Google Cloud obtenido y guardado exitosamente!',
+      });
+    } catch (error: any) {
+      console.error('Error en exchangeGoogleOAuthCode:', error);
+      res.status(400).json({
+        success: false,
+        message: error.response?.data?.error_description || error.message || 'Error al canjear código por tokens.',
+      });
+    }
+  }
+
+  /**
+   * Probar conexión y enviar correo de diagnóstico
    */
   public static async testEmailConnection(req: Request, res: Response): Promise<void> {
     try {

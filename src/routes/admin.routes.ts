@@ -28,9 +28,11 @@ router.get('/wompi-config', AdminController.getPaymentConfig);
 router.put('/wompi-config', AdminController.updatePaymentConfig);
 router.post('/wompi-config/test', AdminController.testWompiConnection);
 
-// Configuración de Correo Electrónico (Gmail SMTP / Verificación OTP)
+// Configuración de Correo Electrónico (Gmail API OAuth2 / SMTP)
 router.get('/email-config', AdminController.getEmailConfig);
 router.put('/email-config', AdminController.updateEmailConfig);
+router.get('/email-config/oauth/url', AdminController.getGoogleOAuthUrl);
+router.post('/email-config/oauth/exchange', AdminController.exchangeGoogleOAuthCode);
 router.post('/email-config/test', AdminController.testEmailConnection);
 
 // Gestión de Usuarios (DUI, teléfono, datos bancarios)
