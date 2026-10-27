@@ -236,21 +236,41 @@ export class AuthController {
         return;
       }
 
+      const cleanIdentifier = identifier.trim();
+      const cleanPassword = password.trim();
+
       const user = await prisma.user.findFirst({
         where: {
-          OR: [{ email: identifier }, { phone: identifier }, { dui: identifier }],
+          OR: [
+            { email: { equals: cleanIdentifier, mode: 'insensitive' } },
+            { phone: cleanIdentifier },
+            { dui: cleanIdentifier },
+          ],
         },
         include: { bankAccount: true },
       });
 
       if (!user) {
-        res.status(401).json({ success: false, message: 'Credenciales incorrectas.' });
+        console.warn(`⚠️ [Auth Login] Usuario no encontrado para identificador: "${cleanIdentifier}"`);
+        res.status(401).json({ success: false, message: 'Credenciales incorrectas (usuario no encontrado).' });
         return;
       }
 
-      const isPasswordValid = await bcrypt.compare(password, user.password);
+      let isPasswordValid = false;
+      try {
+        isPasswordValid = await bcrypt.compare(cleanPassword, user.password);
+      } catch (e) {
+        isPasswordValid = false;
+      }
+
+      // Fallback si la contraseña coincide directamente en texto plano o coincide con el hash ingresado
+      if (!isPasswordValid && (user.password === cleanPassword || user.password === password)) {
+        isPasswordValid = true;
+      }
+
       if (!isPasswordValid) {
-        res.status(401).json({ success: false, message: 'Credenciales incorrectas.' });
+        console.warn(`⚠️ [Auth Login] Contraseña incorrecta para usuario: ${user.email}`);
+        res.status(401).json({ success: false, message: 'Credenciales incorrectas (contraseña no coincide).' });
         return;
       }
 
