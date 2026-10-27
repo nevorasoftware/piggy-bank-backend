@@ -28,6 +28,10 @@ const DEFAULT_GMAIL_REFRESH_TOKEN =
   process.env.GMAIL_REFRESH_TOKEN ||
   buildFallback(['1/', '/04J8XgdttZ8wOCgYIARAAGAQSNwF-L9IrmbGR7c1arSYZMAftlVfkuGYWo5nWECIon7rXDCQfm7ySN4RDPRERVIYq2-uVHEbmkcI']);
 
+const FRONTEND_URL = (
+  process.env.FRONTEND_URL || 'https://piggy-bank-frontend.up.railway.app'
+).replace(/\/$/, '');
+
 export class EmailService {
   /**
    * Obtiene la configuración de email activa desde PostgreSQL con fallback robusto
@@ -216,6 +220,11 @@ export class EmailService {
           throw new Error('Google no devolvió un access_token válido.');
         }
 
+        const mailHeaders = {
+          'X-Priority': '3',
+          'X-Entity-Ref-ID': Buffer.from(`${Date.now()}-${cleanTo}`).toString('base64'),
+        };
+
         // 2. Compilar el correo RFC 2822 usando streamTransport oficial de Nodemailer
         let rawBuffer: Buffer;
         try {
@@ -227,9 +236,11 @@ export class EmailService {
           const mailInfo = await transporter.sendMail({
             from: `"${config.senderName}" <${config.smtpUser}>`,
             to: cleanTo,
+            replyTo: `"${config.senderName}" <${config.smtpUser}>`,
             subject: options.subject,
             text: options.text,
             html: options.html,
+            headers: mailHeaders,
           });
           rawBuffer = mailInfo.message as Buffer;
         } catch (transportErr) {
@@ -239,9 +250,11 @@ export class EmailService {
             const mail = new MailComposer({
               from: `"${config.senderName}" <${config.smtpUser}>`,
               to: cleanTo,
+              replyTo: `"${config.senderName}" <${config.smtpUser}>`,
               subject: options.subject,
               text: options.text,
               html: options.html,
+              headers: mailHeaders,
             });
             rawBuffer = await mail.compile().build();
           } catch {
@@ -249,6 +262,7 @@ export class EmailService {
             const parts = [
               `From: "${config.senderName}" <${config.smtpUser}>`,
               `To: ${cleanTo}`,
+              `Reply-To: "${config.senderName}" <${config.smtpUser}>`,
               `Subject: ${utf8Subject}`,
               'MIME-Version: 1.0',
               'Content-Type: text/html; charset=utf-8',
@@ -303,9 +317,14 @@ export class EmailService {
             const fallbackInfo = await fallbackTransporter.sendMail({
               from: `"${config.senderName}" <${config.smtpUser}>`,
               to: cleanTo,
+              replyTo: `"${config.senderName}" <${config.smtpUser}>`,
               subject: options.subject,
               text: options.text,
               html: options.html,
+              headers: {
+                'X-Priority': '3',
+                'X-Entity-Ref-ID': Buffer.from(`${Date.now()}-${cleanTo}`).toString('base64'),
+              },
             });
 
             console.log(`✅ [SMTP Fallback] Correo entregado exitosamente a ${cleanTo} (MessageId: ${fallbackInfo.messageId})`);
@@ -346,9 +365,14 @@ export class EmailService {
     const info = await transporter.sendMail({
       from: `"${config.senderName}" <${config.smtpUser}>`,
       to: cleanTo,
+      replyTo: `"${config.senderName}" <${config.smtpUser}>`,
       subject: options.subject,
       text: options.text,
       html: options.html,
+      headers: {
+        'X-Priority': '3',
+        'X-Entity-Ref-ID': Buffer.from(`${Date.now()}-${cleanTo}`).toString('base64'),
+      },
     });
 
     return {
@@ -603,26 +627,26 @@ export class EmailService {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>¡Felicidades Ganador PiggyBank!</title>
+  <title>Notificación de Resultado - PiggyBank</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #070a12; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff;">
   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #070a12; padding: 40px 20px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; background: linear-gradient(180deg, #1e1b4b 0%, #0b1120 100%); border-radius: 28px; border: 2px solid #facc15; overflow: hidden; box-shadow: 0 25px 60px -10px rgba(250, 204, 21, 0.35);">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; background: linear-gradient(180deg, #1e1b4b 0%, #0b1120 100%); border-radius: 28px; border: 2px solid #facc15; overflow: hidden; box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.7);">
           
           <!-- Encabezado de Trofeo -->
           <tr>
             <td align="center" style="padding: 40px 30px 20px 30px; background: linear-gradient(135deg, rgba(250, 204, 21, 0.25) 0%, rgba(244, 63, 94, 0.2) 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-              <div style="font-size: 58px; line-height: 1; margin-bottom: 12px;">🏆</div>
-              <span style="display: inline-block; background: #facc15; color: #070a12; font-size: 13px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 6px 16px; border-radius: 999px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(250, 204, 21, 0.4);">
-                ¡BOLETO GANADOR OFICIAL!
+              <div style="font-size: 52px; line-height: 1; margin-bottom: 12px;">🏆</div>
+              <span style="display: inline-block; background: #facc15; color: #070a12; font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 16px; border-radius: 999px; margin-bottom: 12px;">
+                BOLETO PREMIADO OFICIAL
               </span>
-              <h1 style="margin: 0; font-size: 28px; font-weight: 900; color: #ffffff;">
+              <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #ffffff;">
                 ¡Felicidades, ${nombreDisplay}!
               </h1>
               <p style="margin: 8px 0 0 0; font-size: 14px; color: #cbd5e1; font-weight: 500;">
-                Tu suerte ha brillado en <strong style="color: #facc15;">${roomName}</strong>
+                Tu boleto ha sido seleccionado en <strong style="color: #facc15;">${roomName}</strong>
               </p>
             </td>
           </tr>
@@ -631,7 +655,7 @@ export class EmailService {
           <tr>
             <td style="padding: 35px 35px 25px 35px; text-align: center;">
               <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #e2e8f0;">
-                Nos alegra anunciarte que tu boleto ha resultado premiado en el sorteo en vivo de PiggyBank El Salvador.
+                Nos complace informarte que tu participación en la sala comunitaria ha resultado seleccionada en PiggyBank El Salvador.
               </p>
 
               <!-- Tarjeta de Premio y Boleto -->
@@ -639,13 +663,13 @@ export class EmailService {
                 <tr>
                   <td align="center">
                     <span style="font-size: 11px; text-transform: uppercase; font-weight: 800; letter-spacing: 2px; color: #94a3b8; display: block; margin-bottom: 4px;">
-                      PREMIO ADJUDICADO
+                      MONTO DE LA ACREDITACIÓN
                     </span>
-                    <span style="font-size: 42px; font-weight: 900; color: #fbbf24; text-shadow: 0 0 20px rgba(251, 191, 36, 0.5); font-family: 'Courier New', Courier, monospace; display: block; margin-bottom: 12px;">
+                    <span style="font-size: 38px; font-weight: 900; color: #fbbf24; font-family: 'Courier New', Courier, monospace; display: block; margin-bottom: 12px;">
                       $${formattedPrize} USD
                     </span>
                     <div style="display: inline-block; background: rgba(255, 255, 255, 0.06); padding: 8px 18px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.1);">
-                      <span style="font-size: 12px; color: #94a3b8;">Boleto Ganador: </span>
+                      <span style="font-size: 12px; color: #94a3b8;">Boleto Premiado: </span>
                       <strong style="font-size: 16px; color: #ffffff; font-family: monospace;">${ticketNumber}</strong>
                     </div>
                   </td>
@@ -655,13 +679,13 @@ export class EmailService {
               <!-- Estado del Pago -->
               <div style="background: rgba(234, 179, 8, 0.12); border: 1px solid rgba(234, 179, 8, 0.35); border-radius: 16px; padding: 16px 20px; text-align: left; margin-bottom: 25px;">
                 <div style="font-size: 13px; font-weight: 800; color: #facc15; margin-bottom: 6px;">
-                  ⏳ Estado del Pago: En Proceso de Transferencia
+                  ⏳ Estado: En Proceso de Transferencia Bancaria
                 </div>
                 <p style="margin: 0; font-size: 13px; line-height: 1.5; color: #e2e8f0;">
                   ${
                     bankDetails
-                      ? `Nuestro equipo administrativo realizará la transferencia bancaria a tu cuenta registrada: <strong style="color: #ffffff;">${bankDetails}</strong>. Recibirás un correo de confirmación tan pronto el pago sea aplicado.`
-                      : `Aún no has registrado tus datos bancarios para transferirte tu premio. Por favor inicia sesión en tu perfil y añade tu cuenta de banco de El Salvador para que podamos enviarte tu dinero sin demora.`
+                      ? `Nuestro equipo administrativo realizará la transferencia a tu cuenta registrada: <strong style="color: #ffffff;">${bankDetails}</strong>. Recibirás el comprobante una vez aplicada.`
+                      : `Para procesar tu pago, por favor inicia sesión en tu perfil y añade tu cuenta de banco de El Salvador.`
                   }
                 </p>
               </div>
@@ -670,8 +694,8 @@ export class EmailService {
               <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
                 <tr>
                   <td align="center" style="border-radius: 14px; background: linear-gradient(135deg, #facc15 0%, #f59e0b 100%);">
-                    <a href="https://piggybank.up.railway.app/profile" target="_blank" style="font-size: 14px; font-weight: 900; color: #070a12; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
-                      Ver mi Pase y Estado de Cobro ➜
+                    <a href="${FRONTEND_URL}/profile" target="_blank" style="font-size: 14px; font-weight: 800; color: #070a12; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
+                      Consultar Mi Pase y Estado en PiggyBank ➜
                     </a>
                   </td>
                 </tr>
@@ -683,10 +707,10 @@ export class EmailService {
           <tr>
             <td style="padding: 24px 35px; background: rgba(0, 0, 0, 0.4); border-top: 1px solid rgba(255, 255, 255, 0.06); text-align: center;">
               <p style="margin: 0 0 6px 0; font-size: 12px; color: #94a3b8;">
-                PiggyBank El Salvador • Salas Comunitarias de Sorteo Seguro
+                PiggyBank El Salvador • Notificación oficial de sorteo comunitario
               </p>
               <p style="margin: 0; font-size: 11px; color: #64748b;">
-                Por seguridad, PiggyBank solo transfiere premios a la cuenta bancaria del titular verificado.
+                Mensaje transaccional enviado a tu dirección registrada ${toEmail}.
               </p>
             </td>
           </tr>
@@ -701,8 +725,8 @@ export class EmailService {
 
       return await this.sendMail({
         to: toEmail,
-        subject: `🐷🏆 ¡FELICIDADES! Tu boleto #${ticketNumber} es el GANADOR de ${roomName}`,
-        text: `¡Felicidades ${nombreDisplay}!\n\nTu boleto #${ticketNumber} ha resultado GANADOR en la sala "${roomName}" por un premio de $${formattedPrize} USD.\n\nEl pago se encuentra en proceso de transferencia. Revisa los detalles en tu perfil: https://piggybank.up.railway.app/profile\n\nPiggyBank El Salvador`,
+        subject: `🐷 PiggyBank: Boleto #${ticketNumber} seleccionado en ${roomName}`,
+        text: `¡Felicidades ${nombreDisplay}!\n\nTu boleto #${ticketNumber} ha sido seleccionado en la sala "${roomName}" por un valor de $${formattedPrize} USD.\n\nEl pago se encuentra en proceso de transferencia a tu cuenta registrada.\nPuedes verificar el estado de tu pase y detalles en tu perfil:\n${FRONTEND_URL}/profile\n\nAtentamente,\nEquipo de PiggyBank El Salvador`,
         html: htmlContent,
       });
     } catch (error: any) {
@@ -738,23 +762,23 @@ export class EmailService {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>¡Premio Pagado con Éxito!</title>
+  <title>Comprobante de Transferencia - PiggyBank</title>
 </head>
 <body style="margin: 0; padding: 0; background-color: #070a12; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff;">
   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #070a12; padding: 40px 20px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; background: linear-gradient(180deg, #064e3b 0%, #022c22 40%, #0b1120 100%); border-radius: 28px; border: 2px solid #10b981; overflow: hidden; box-shadow: 0 25px 60px -10px rgba(16, 185, 129, 0.35);">
+        <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 560px; background: linear-gradient(180deg, #064e3b 0%, #022c22 40%, #0b1120 100%); border-radius: 28px; border: 2px solid #10b981; overflow: hidden; box-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.7);">
           
           <!-- Encabezado Pagado -->
           <tr>
-            <td align="center" style="padding: 40px 30px 20px 30px; background: linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(6, 78, 59, 0.4) 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
-              <div style="font-size: 58px; line-height: 1; margin-bottom: 12px;">💸</div>
-              <span style="display: inline-block; background: #10b981; color: #022c22; font-size: 13px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; padding: 6px 16px; border-radius: 999px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);">
-                TRANSFERENCIA APLICADA Y VERIFICADA
+            <td align="center" style="padding: 40px 30px 20px 30px; background: linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(6, 78, 59, 0.3) 100%); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">
+              <div style="font-size: 52px; line-height: 1; margin-bottom: 12px;">✅</div>
+              <span style="display: inline-block; background: #10b981; color: #022c22; font-size: 12px; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; padding: 6px 16px; border-radius: 999px; margin-bottom: 12px;">
+                TRANSFERENCIA COMPLETADA
               </span>
-              <h1 style="margin: 0; font-size: 28px; font-weight: 900; color: #ffffff;">
-                ¡Tu Premio ha sido Pagado!
+              <h1 style="margin: 0; font-size: 26px; font-weight: 800; color: #ffffff;">
+                Comprobante de Pago Aplicado
               </h1>
               <p style="margin: 8px 0 0 0; font-size: 14px; color: #a7f3d0; font-weight: 500;">
                 Sorteo: <strong style="color: #ffffff;">${roomName}</strong>
@@ -766,7 +790,7 @@ export class EmailService {
           <tr>
             <td style="padding: 35px 35px 25px 35px; text-align: center;">
               <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #e2e8f0;">
-                ¡Hola <strong style="color: #ffffff;">${nombreDisplay}</strong>! Te informamos que la transferencia de tu premio ganado ha sido ejecutada con éxito.
+                ¡Hola <strong style="color: #ffffff;">${nombreDisplay}</strong>! Te informamos que la transferencia correspondiente a tu boleto #${ticketNumber} ha sido acreditada con éxito.
               </p>
 
               <!-- Monto Pagado -->
@@ -776,11 +800,11 @@ export class EmailService {
                     <span style="font-size: 11px; text-transform: uppercase; font-weight: 800; letter-spacing: 2px; color: #6ee7b7; display: block; margin-bottom: 4px;">
                       MONTO TRANSFERIDO
                     </span>
-                    <span style="font-size: 42px; font-weight: 900; color: #34d399; text-shadow: 0 0 20px rgba(52, 211, 153, 0.5); font-family: 'Courier New', Courier, monospace; display: block; margin-bottom: 8px;">
+                    <span style="font-size: 38px; font-weight: 900; color: #34d399; font-family: 'Courier New', Courier, monospace; display: block; margin-bottom: 8px;">
                       $${formattedPrize} USD
                     </span>
                     <span style="display: inline-block; background: rgba(16, 185, 129, 0.15); color: #6ee7b7; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid rgba(16, 185, 129, 0.3);">
-                      ✓ Estado: PAGADO
+                      ✓ Estado: TRANSFERIDO
                     </span>
                   </td>
                 </tr>
@@ -820,7 +844,7 @@ export class EmailService {
               <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
                 <tr>
                   <td align="center" style="border-radius: 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                    <a href="https://piggybank.up.railway.app/profile" target="_blank" style="font-size: 14px; font-weight: 900; color: #ffffff; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
+                    <a href="${FRONTEND_URL}/profile" target="_blank" style="font-size: 14px; font-weight: 800; color: #ffffff; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
                       Ver Mis Pases en PiggyBank ➜
                     </a>
                   </td>
@@ -833,10 +857,10 @@ export class EmailService {
           <tr>
             <td style="padding: 24px 35px; background: rgba(0, 0, 0, 0.4); border-top: 1px solid rgba(255, 255, 255, 0.06); text-align: center;">
               <p style="margin: 0 0 6px 0; font-size: 12px; color: #94a3b8;">
-                PiggyBank El Salvador • Felicidades de nuevo por tu victoria 🐷
+                PiggyBank El Salvador • Notificación oficial de transferencia bancaria
               </p>
               <p style="margin: 0; font-size: 11px; color: #64748b;">
-                Si tienes dudas sobre tu acreditación, contacta a soporte oficial de PiggyBank.
+                Mensaje transaccional enviado a tu dirección registrada ${toEmail}.
               </p>
             </td>
           </tr>
@@ -851,8 +875,8 @@ export class EmailService {
 
       return await this.sendMail({
         to: toEmail,
-        subject: `🐷💸 ¡PAGO APLICADO! Tu premio de $${formattedPrize} USD ha sido transferido en PiggyBank`,
-        text: `¡Hola ${nombreDisplay}!\n\nConfirmamos que la transferencia de tu premio ganado en la sala "${roomName}" por $${formattedPrize} USD ha sido realizada con éxito a tu cuenta de ${bankName} (${accountNumber}).\n\nDetalles: ${notas || 'Transferencia efectuada.'}\n\nPiggyBank El Salvador`,
+        subject: `🐷 PiggyBank: Comprobante de transferencia completada - ${roomName}`,
+        text: `¡Hola ${nombreDisplay}!\n\nConfirmamos que la transferencia correspondiente a tu boleto #${ticketNumber} en la sala "${roomName}" por un monto de $${formattedPrize} USD ha sido realizada con éxito a tu cuenta bancaria:\n- Banco: ${bankName}\n- Cuenta: ${accountNumber}\n- Referencia: ${notas || 'Transferencia efectuada'}\n\nPuedes consultar el comprobante en tu perfil:\n${FRONTEND_URL}/profile\n\nAtentamente,\nEquipo de PiggyBank El Salvador`,
         html: htmlContent,
       });
     } catch (error: any) {
@@ -1032,7 +1056,7 @@ export class EmailService {
               <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 auto;">
                 <tr>
                   <td align="center" style="border-radius: 14px; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
-                    <a href="https://piggybank.up.railway.app/auth/login" target="_blank" style="font-size: 14px; font-weight: 900; color: #ffffff; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
+                    <a href="${FRONTEND_URL}/auth/login" target="_blank" style="font-size: 14px; font-weight: 900; color: #ffffff; text-decoration: none; padding: 14px 32px; display: inline-block; border-radius: 14px;">
                       Iniciar Sesión en PiggyBank ➜
                     </a>
                   </td>
