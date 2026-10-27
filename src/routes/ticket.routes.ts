@@ -24,4 +24,7 @@ router.post(
 // Consultar boleto / pase digital en sala
 router.get('/my-pass/:roomId', authenticateJWT, TicketController.getMyPassForRoom);
 
+// Confirmar transacción al retornar de Wompi
+router.post('/confirm', authenticateJWT, TicketController.confirmPayment);
+
 export default router;

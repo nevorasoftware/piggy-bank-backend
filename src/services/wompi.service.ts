@@ -237,10 +237,10 @@ export class WompiService {
   /**
    * Procesa el webhook de Wompi con validación HMAC y ejecución estricta del middleware puedeParticipar.
    */
-  public static async processWebhook(payload: WompiWebhookPayload, signatureHeader?: string) {
-    console.log('🔔 [Wompi Webhook] Recibido evento:', payload?.event);
+  public static async processWebhook(payload: any, signatureHeader?: string) {
+    console.log('🔔 [Wompi Webhook] Recibido evento:', payload?.event || payload?.idTransaccion || 'Wompi SV');
 
-    // 1. Validar firma criptográfica HMAC
+    // 1. Validar firma criptográfica HMAC si aplica
     const isValidSignature = verifyWompiChecksum(payload, signatureHeader);
     if (!isValidSignature) {
       console.error('❌ [Wompi Webhook] Firma HMAC / Checksum inválido.');
@@ -248,12 +248,29 @@ export class WompiService {
     }
 
     const transactionData = payload.data?.transaction;
-    if (!transactionData) {
-      console.warn('⚠️ [Wompi Webhook] Payload no contiene datos de transacción.');
-      return { success: false, message: 'Payload sin transacción' };
+    const reference =
+      transactionData?.reference ||
+      payload.identificadorEnlaceComercio ||
+      payload.idExterno ||
+      payload.reference;
+
+    if (!reference) {
+      console.warn('⚠️ [Wompi Webhook] Payload no contiene referencia válida.');
+      return { success: false, message: 'Payload sin referencia de transacción' };
     }
 
-    const { reference, id: wompiTxId, status, payment_method_type } = transactionData;
+    const wompiTxId = String(
+      transactionData?.id || payload.idTransaccion || payload.id || `wompi_${Date.now()}`
+    );
+
+    const isApproved =
+      transactionData?.status === 'APPROVED' ||
+      payload.esAprobada === true ||
+      payload.status === 'APPROVED' ||
+      payload.resultado === 'Aprobada';
+
+    const payment_method_type =
+      transactionData?.payment_method_type || payload.formaPago || 'CARD';
 
     // 2. Buscar la transacción local registrada
     const localTx = await prisma.transaction.findUnique({
@@ -276,16 +293,16 @@ export class WompiService {
     }
 
     // Si el pago no fue aprobado por Wompi
-    if (status !== 'APPROVED') {
+    if (!isApproved) {
       await prisma.transaction.update({
         where: { id: localTx.id },
         data: {
           wompiTransactionId: wompiTxId,
-          status: status === 'DECLINED' ? TransactionStatus.DECLINED : TransactionStatus.ERROR,
-          paymentMethod: payment_method_type,
+          status: TransactionStatus.DECLINED,
+          paymentMethod: String(payment_method_type),
         },
       });
-      return { success: true, message: `Transacción marcada como ${status}` };
+      return { success: true, message: 'Transacción marcada como DECLINED' };
     }
 
     // 3. Ejecutar validación de reglas 6/3 antes de asignar el pase definitivo
@@ -310,7 +327,56 @@ export class WompiService {
       throw new Error('Transacción no tiene sala asociada.');
     }
 
-    return await this.finalizeApprovedTransaction(localTx, wompiTxId, payment_method_type || 'CARD');
+    return await this.finalizeApprovedTransaction(localTx, wompiTxId, String(payment_method_type || 'CARD'));
+  }
+
+  /**
+   * Confirma una transacción por su referencia única cuando el usuario retorna de Wompi.
+   */
+  public static async confirmTransactionByReference(userId: string, reference: string) {
+    const localTx = await prisma.transaction.findUnique({
+      where: { wompiReference: reference },
+      include: {
+        user: true,
+        room: true,
+      },
+    });
+
+    if (!localTx) {
+      throw new Error(`Transacción no encontrada para la referencia: ${reference}`);
+    }
+
+    if (localTx.userId !== userId) {
+      throw new Error('Esta transacción pertenece a otro usuario.');
+    }
+
+    // Si ya estaba aprobada, devolver el boleto existente
+    if (localTx.status === TransactionStatus.APPROVED) {
+      const ticket = await prisma.ticket.findFirst({
+        where: { transactionId: localTx.id },
+        include: { room: true },
+      });
+      return { success: true, ticket, room: localTx.room, alreadyProcessed: true };
+    }
+
+    // Validar reglas 6/3 antes de emitir
+    const check = await puedeParticipar(userId);
+    if (!check.allowed) {
+      throw new Error(check.reason || 'Límite de participaciones alcanzado.');
+    }
+
+    // Finalizar transacción aprobada
+    const finalResult = await this.finalizeApprovedTransaction(
+      localTx,
+      localTx.wompiTransactionId || `wompi_redirect_${Date.now()}`,
+      'CARD'
+    );
+
+    return {
+      success: true,
+      ticket: finalResult.newTicket,
+      room: finalResult.updatedRoom,
+    };
   }
 
   /**

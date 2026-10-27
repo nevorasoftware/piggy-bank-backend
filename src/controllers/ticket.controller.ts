@@ -43,6 +43,34 @@ export class TicketController {
   }
 
   /**
+   * Confirma una transacción por referencia cuando el usuario regresa de Wompi o completa el flujo
+   */
+  public static async confirmPayment(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const userId = req.user!.id;
+      const { reference } = req.body;
+
+      if (!reference) {
+        res.status(400).json({ success: false, message: 'La referencia de transacción es requerida.' });
+        return;
+      }
+
+      const result = await WompiService.confirmTransactionByReference(userId, reference);
+
+      res.json({
+        message: '¡Pago confirmado! Pase digital emitido exitosamente.',
+        ...result,
+      });
+    } catch (error: any) {
+      console.error('Error en confirmPayment:', error.message);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Error al confirmar la transacción de Wompi.',
+      });
+    }
+  }
+
+  /**
    * Obtiene el pase digital del usuario para una sala específica
    */
   public static async getMyPassForRoom(req: AuthRequest, res: Response): Promise<void> {
