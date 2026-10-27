@@ -403,13 +403,12 @@ export class AdminController {
     try {
       const { id } = req.params;
       const { notas } = req.body;
-      const adminEmail = (req as any).user?.email;
 
-      const sorteo = await SorteoService.marcarPagoAplicado(id, notas, adminEmail);
+      const sorteo = await SorteoService.marcarPagoAplicado(id, notas);
 
       res.json({
         success: true,
-        message: 'Pago marcado como APLICADO exitosamente. Ganador y Administración notificados por Correo Electrónico.',
+        message: `Pago marcado como APLICADO exitosamente. Correo enviado al correo registrado del ganador (${sorteo.ganador?.email || 'ganador'}).`,
         sorteo,
       });
     } catch (error: any) {
@@ -427,13 +426,12 @@ export class AdminController {
   public static async resendPayoutEmail(req: Request, res: Response): Promise<void> {
     try {
       const { id } = req.params;
-      const adminEmail = (req as any).user?.email;
 
-      const result = await SorteoService.enviarNotificacionPago(id, adminEmail);
+      const result = await SorteoService.enviarNotificacionPago(id);
 
       res.json({
         success: true,
-        message: `Correo de confirmación de pago reenviado exitosamente a ${result.winnerEmail || 'el ganador'} y administración.`,
+        message: `Correo de confirmación de pago enviado exitosamente al correo registrado del ganador (${result.winnerEmail}).`,
         result,
       });
     } catch (error: any) {
