@@ -5,6 +5,50 @@ import { initSocketIO } from './socket/socket.handler';
 import { initDailyResetCron } from './cron/reset.cron';
 import { initAutoDrawCron } from './cron/draw.cron';
 import { prisma } from './config/database';
+import bcrypt from 'bcryptjs';
+import { Role } from '@prisma/client';
+
+async function ensureAdminUser() {
+  try {
+    const adminEmail = 'admin@piggybank.com';
+    const hashedPassword = await bcrypt.hash('Gacela@2305', 10);
+
+    await prisma.user.upsert({
+      where: { email: adminEmail },
+      update: {
+        password: hashedPassword,
+        role: Role.ADMIN,
+        emailVerified: true,
+        phoneVerified: true,
+      },
+      create: {
+        fullName: 'Administrador PiggyBank',
+        email: adminEmail,
+        phone: '+50370001122',
+        dui: '01234567-8',
+        password: hashedPassword,
+        role: Role.ADMIN,
+        emailVerified: true,
+        phoneVerified: true,
+      },
+    });
+    console.log('👑 [Auth] Cuenta Administrador lista: admin@piggybank.com / Gacela@2305');
+
+    // Asegurar también rol ADMIN para jgiron.ing@gmail.com si existe
+    const personalAccount = await prisma.user.findFirst({
+      where: { email: { equals: 'jgiron.ing@gmail.com', mode: 'insensitive' } },
+    });
+    if (personalAccount && personalAccount.role !== Role.ADMIN) {
+      await prisma.user.update({
+        where: { id: personalAccount.id },
+        data: { role: Role.ADMIN, emailVerified: true },
+      });
+      console.log('👑 [Auth] Cuenta jgiron.ing@gmail.com promovida a ADMIN exitosamente.');
+    }
+  } catch (error) {
+    console.error('⚠️ [Auth] Error en ensureAdminUser:', error);
+  }
+}
 
 async function bootstrap() {
   const app = createApp();
@@ -18,6 +62,9 @@ async function bootstrap() {
 
   // Inicializar Cron Job de sorteo automático para cuando expire el temporizador
   initAutoDrawCron();
+
+  // Asegurar cuenta de administración en la base de datos
+  await ensureAdminUser();
 
   // Escuchar en el puerto dinámico de Railway en todas las interfaces de red (0.0.0.0)
   server.listen(ENV.PORT, '0.0.0.0', () => {
