@@ -225,3 +225,17 @@ model PaymentConfig {
   @@map("payment_configs")
 }
 
+model EmailConfig {
+  id         Int      @id @default(1)
+  smtpHost   String   @default("smtp.gmail.com")
+  smtpPort   Int      @default(465)
+  smtpSecure Boolean  @default(true)
+  smtpUser   String   @default("piggybanksv@gmail.com")
+  smtpPass   String   @default("")
+  senderName String   @default("PiggyBank El Salvador")
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
+
+  @@map("email_configs")
+}
+

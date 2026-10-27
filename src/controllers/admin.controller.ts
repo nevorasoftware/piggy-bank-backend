@@ -5,6 +5,7 @@ import { getElSalvadorDateString } from '../utils/date';
 import { RoomStatus, TransactionStatus } from '@prisma/client';
 import { broadcastRoomUpdate } from '../socket/socket.handler';
 import { WompiService } from '../services/wompi.service';
+import { EmailService } from '../services/email.service';
 
 export class AdminController {
   /**
@@ -534,6 +535,115 @@ export class AdminController {
         success: false,
         message: error.message || 'Error al conectar con los servidores de Wompi SV.',
       });
+    }
+  }
+
+  /**
+   * Configuración de Correo Electrónico (Gmail SMTP / Verificación): Obtener parámetros
+   */
+  public static async getEmailConfig(req: Request, res: Response): Promise<void> {
+    try {
+      const config = await EmailService.getEmailConfig();
+      const reveal = req.query.reveal === 'true';
+
+      const maskedPass = config.smtpPass
+        ? config.smtpPass.length > 4
+          ? '••••••••••••' + config.smtpPass.slice(-4)
+          : '••••••••'
+        : '';
+
+      res.json({
+        success: true,
+        config: {
+          smtpHost: config.smtpHost,
+          smtpPort: config.smtpPort,
+          smtpSecure: config.smtpSecure,
+          smtpUser: config.smtpUser,
+          senderName: config.senderName,
+          isActive: config.isActive,
+          hasPass: Boolean(config.smtpPass),
+          maskedPass,
+          smtpPass: reveal ? config.smtpPass : undefined,
+        },
+      });
+    } catch (error) {
+      console.error('Error en getEmailConfig:', error);
+      res.status(500).json({ success: false, message: 'Error al obtener configuración de correo.' });
+    }
+  }
+
+  /**
+   * Configuración de Correo Electrónico: Guardar o actualizar parámetros
+   */
+  public static async updateEmailConfig(req: Request, res: Response): Promise<void> {
+    try {
+      const { smtpHost, smtpPort, smtpSecure, smtpUser, smtpPass, senderName, isActive } = req.body;
+
+      if (!smtpUser) {
+        res.status(400).json({ success: false, message: 'El correo remitente es requerido.' });
+        return;
+      }
+
+      const current = await EmailService.getEmailConfig();
+      let newPass = current.smtpPass;
+      if (smtpPass && typeof smtpPass === 'string' && !smtpPass.includes('••••')) {
+        newPass = smtpPass.trim();
+      }
+
+      const updated = await prisma.emailConfig.upsert({
+        where: { id: 1 },
+        update: {
+          smtpHost: smtpHost ? smtpHost.trim() : 'smtp.gmail.com',
+          smtpPort: smtpPort ? parseInt(smtpPort, 10) : 465,
+          smtpSecure: smtpSecure !== undefined ? Boolean(smtpSecure) : true,
+          smtpUser: smtpUser.trim(),
+          smtpPass: newPass,
+          senderName: senderName ? senderName.trim() : 'PiggyBank El Salvador',
+          isActive: isActive !== undefined ? Boolean(isActive) : true,
+        },
+        create: {
+          id: 1,
+          smtpHost: smtpHost ? smtpHost.trim() : 'smtp.gmail.com',
+          smtpPort: smtpPort ? parseInt(smtpPort, 10) : 465,
+          smtpSecure: smtpSecure !== undefined ? Boolean(smtpSecure) : true,
+          smtpUser: smtpUser.trim(),
+          smtpPass: newPass,
+          senderName: senderName ? senderName.trim() : 'PiggyBank El Salvador',
+          isActive: isActive !== undefined ? Boolean(isActive) : true,
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'Configuración de correo guardada exitosamente.',
+        config: {
+          smtpHost: updated.smtpHost,
+          smtpPort: updated.smtpPort,
+          smtpSecure: updated.smtpSecure,
+          smtpUser: updated.smtpUser,
+          senderName: updated.senderName,
+          isActive: updated.isActive,
+          hasPass: Boolean(updated.smtpPass),
+          maskedPass: updated.smtpPass ? '••••••••••••' + updated.smtpPass.slice(-4) : '',
+        },
+      });
+    } catch (error) {
+      console.error('Error en updateEmailConfig:', error);
+      res.status(500).json({ success: false, message: 'Error al actualizar configuración de correo.' });
+    }
+  }
+
+  /**
+   * Probar conexión SMTP y enviar correo de diagnóstico
+   */
+  public static async testEmailConnection(req: Request, res: Response): Promise<void> {
+    try {
+      const { testEmail } = req.body;
+      const result = await EmailService.testConnection(testEmail);
+      res.json(result);
+    } catch (error: any) {
+      console.error('Error en testEmailConnection:', error);
+      res.status(400).json({ success: false, message: error.message || 'Error al probar conexión SMTP.' });
     }
   }
 }

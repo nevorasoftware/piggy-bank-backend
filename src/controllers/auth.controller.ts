@@ -6,6 +6,7 @@ import { prisma } from '../config/database';
 import { ENV } from '../config/env';
 import { validateDUI } from '../utils/dui.validator';
 import { WhatsAppService } from '../services/whatsapp.service';
+import { EmailService } from '../services/email.service';
 import { AuthRequest } from '../middlewares/auth.middleware';
 import { VerificationType, Role } from '@prisma/client';
 
@@ -72,22 +73,22 @@ export class AuthController {
         },
       });
 
-      // Generar código OTP de 6 dígitos para WhatsApp
+      // Generar código OTP de 6 dígitos para Verificación por Correo Electrónico
       const otpCode = crypto.randomInt(100000, 999999).toString();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutos
 
       await prisma.verificationCode.create({
         data: {
           userId: newUser.id,
-          identifier: newUser.phone,
-          type: VerificationType.WHATSAPP,
+          identifier: newUser.email,
+          type: VerificationType.EMAIL,
           code: otpCode,
           expiresAt,
         },
       });
 
-      // Enviar OTP vía WhatsApp Cloud API
-      await WhatsAppService.sendOtpCode(newUser.phone, otpCode);
+      // Enviar OTP vía Gmail SMTP desde piggybanksv@gmail.com
+      await EmailService.sendVerificationEmail(newUser.email, otpCode, newUser.fullName);
 
       // Generar JWT provisional
       const token = jwt.sign(
@@ -98,7 +99,7 @@ export class AuthController {
 
       res.status(201).json({
         success: true,
-        message: 'Usuario registrado exitosamente. Se ha enviado un código de verificación a tu WhatsApp.',
+        message: 'Usuario registrado exitosamente. Se ha enviado un código de verificación a tu correo.',
         token,
         user: {
           id: newUser.id,
@@ -108,6 +109,7 @@ export class AuthController {
           dui: newUser.dui,
           role: newUser.role,
           phoneVerified: newUser.phoneVerified,
+          emailVerified: newUser.emailVerified,
         },
       });
     } catch (error: any) {
@@ -124,7 +126,7 @@ export class AuthController {
       const { identifier, code } = req.body;
 
       if (!identifier || !code) {
-        res.status(400).json({ success: false, message: 'Se requiere identificador (teléfono o correo) y código OTP.' });
+        res.status(400).json({ success: false, message: 'Se requiere identificador (correo o teléfono) y código OTP.' });
         return;
       }
 
@@ -149,21 +151,76 @@ export class AuthController {
         data: { used: true },
       });
 
-      // Actualizar estado de verificación del usuario
+      // Actualizar estado de verificación del usuario (se marcan ambos como verificados)
       if (record.userId) {
         await prisma.user.update({
           where: { id: record.userId },
           data: {
-            phoneVerified: record.type === VerificationType.WHATSAPP ? true : undefined,
-            emailVerified: record.type === VerificationType.EMAIL ? true : undefined,
+            phoneVerified: true,
+            emailVerified: true,
           },
         });
       }
 
-      res.json({ success: true, message: 'Verificación exitosa.' });
+      res.json({ success: true, message: 'Verificación exitosa. Cuenta activada.' });
     } catch (error) {
       console.error('Error en verifyOtp:', error);
       res.status(500).json({ success: false, message: 'Error interno al verificar OTP.' });
+    }
+  }
+
+  /**
+   * Reenvío de código OTP por correo electrónico
+   */
+  public static async resendOtp(req: Request, res: Response): Promise<void> {
+    try {
+      const { identifier } = req.body;
+
+      if (!identifier) {
+        res.status(400).json({ success: false, message: 'Se requiere el correo electrónico.' });
+        return;
+      }
+
+      const user = await prisma.user.findFirst({
+        where: {
+          OR: [{ email: identifier }, { phone: identifier }],
+        },
+      });
+
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Usuario no encontrado.' });
+        return;
+      }
+
+      // Marcar códigos anteriores del usuario como usados
+      await prisma.verificationCode.updateMany({
+        where: { identifier: user.email, used: false },
+        data: { used: true },
+      });
+
+      // Generar nuevo código OTP de 6 dígitos
+      const otpCode = crypto.randomInt(100000, 999999).toString();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      await prisma.verificationCode.create({
+        data: {
+          userId: user.id,
+          identifier: user.email,
+          type: VerificationType.EMAIL,
+          code: otpCode,
+          expiresAt,
+        },
+      });
+
+      await EmailService.sendVerificationEmail(user.email, otpCode, user.fullName);
+
+      res.json({
+        success: true,
+        message: `Se ha enviado un nuevo código de verificación a ${user.email}.`,
+      });
+    } catch (error) {
+      console.error('Error en resendOtp:', error);
+      res.status(500).json({ success: false, message: 'Error interno al reenviar el código OTP.' });
     }
   }
 
