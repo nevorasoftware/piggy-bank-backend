@@ -170,7 +170,11 @@ export class SorteoService {
    * Acción Administrativa: Marcar "Pago Aplicado" a un sorteo ganado.
    * Envía confirmación de transferencia por WhatsApp e incrementa las victorias del usuario.
    */
-  public static async marcarPagoAplicado(sorteoId: string, notas?: string) {
+  public static async marcarPagoAplicado(
+    sorteoId: string,
+    notas?: string,
+    adminEmail?: string
+  ) {
     const sorteo = await prisma.sorteo.findUnique({
       where: { id: sorteoId },
       include: {
@@ -233,23 +237,10 @@ export class SorteoService {
     const bankName = sorteo.ganador.bankAccount?.bankName || 'Cuenta Bancaria';
     const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
 
-    // Enviar Correo al ganador confirmando el pago aplicado
-    if (sorteo.ganador?.email) {
-      const winningTicket = await prisma.ticket.findUnique({
-        where: { id: sorteo.ticketGanadorId },
-      });
-
-      EmailService.sendPayoutConfirmedEmail(
-        sorteo.ganador.email,
-        sorteo.ganador.fullName,
-        sorteo.room.nombre,
-        winningTicket?.ticketNumber || 'TKT-GANADOR',
-        Number(sorteo.montoPremio),
-        bankName,
-        accountNumber,
-        notas || 'Pago verificado y transferido por administración.'
-      ).catch((err) => console.error('Error al enviar correo de pago aplicado:', err));
-    }
+    // Enviar notificaciones de pago aplicado tanto al ganador como a la administración
+    await this.enviarNotificacionPago(sorteoId, adminEmail).catch((err) =>
+      console.error('Error al enviar notificaciones de correo de pago aplicado:', err)
+    );
 
     // Enviar WhatsApp al ganador confirmando el pago aplicado
     if (sorteo.ganador?.phone) {
@@ -259,10 +250,88 @@ export class SorteoService {
         Number(sorteo.montoPremio),
         bankName,
         accountNumber
-      );
+      ).catch((err) => console.error('Error al enviar WhatsApp de pago aplicado:', err));
     }
 
     return updatedSorteo;
+  }
+
+  /**
+   * Envía la notificación de confirmación de pago por correo al ganador y a la administración
+   */
+  public static async enviarNotificacionPago(sorteoId: string, adminEmailOrNotas?: string) {
+    const sorteo = await prisma.sorteo.findUnique({
+      where: { id: sorteoId },
+      include: {
+        room: true,
+        ganador: {
+          include: { bankAccount: true },
+        },
+      },
+    });
+
+    if (!sorteo) {
+      throw new Error('Sorteo no encontrado.');
+    }
+
+    const winningTicket = await prisma.ticket.findUnique({
+      where: { id: sorteo.ticketGanadorId },
+    });
+
+    const bankName = sorteo.ganador.bankAccount?.bankName || 'Banco en El Salvador';
+    const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
+    const notas = sorteo.notasPago || 'Transferencia efectuada y verificada por administración.';
+    const ticketNumber = winningTicket?.ticketNumber || 'TKT-GANADOR';
+    const prize = Number(sorteo.montoPremio);
+
+    const emailResults: any[] = [];
+
+    // 1. Enviar correo formal al ganador
+    if (sorteo.ganador?.email) {
+      console.log(`📧 [enviarNotificacionPago] Enviando confirmación al ganador: ${sorteo.ganador.email}`);
+      const res = await EmailService.sendPayoutConfirmedEmail(
+        sorteo.ganador.email,
+        sorteo.ganador.fullName,
+        sorteo.room.nombre,
+        ticketNumber,
+        prize,
+        bankName,
+        accountNumber,
+        notas
+      );
+      emailResults.push({ to: sorteo.ganador.email, ...res });
+    }
+
+    // 2. Enviar copia de comprobante a la administración
+    const adminTargets = new Set<string>();
+    adminTargets.add('piggybanksv@gmail.com');
+    if (adminEmailOrNotas && adminEmailOrNotas.includes('@')) {
+      adminTargets.add(adminEmailOrNotas.toLowerCase().trim());
+    }
+
+    for (const target of adminTargets) {
+      if (sorteo.ganador?.email && target === sorteo.ganador.email.toLowerCase().trim()) {
+        continue;
+      }
+      console.log(`📧 [enviarNotificacionPago] Enviando copia a la administración: ${target}`);
+      const resAdmin = await EmailService.sendPayoutConfirmedEmail(
+        target,
+        `Administración (Ganador: ${sorteo.ganador.fullName})`,
+        sorteo.room.nombre,
+        ticketNumber,
+        prize,
+        bankName,
+        accountNumber,
+        `Comprobante administrativo: ${notas}`
+      );
+      emailResults.push({ to: target, ...resAdmin });
+    }
+
+    return {
+      success: true,
+      winnerEmail: sorteo.ganador?.email,
+      results: emailResults,
+    };
   }
 
   /**

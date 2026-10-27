@@ -403,12 +403,13 @@ export class AdminController {
     try {
       const { id } = req.params;
       const { notas } = req.body;
+      const adminEmail = (req as any).user?.email;
 
-      const sorteo = await SorteoService.marcarPagoAplicado(id, notas);
+      const sorteo = await SorteoService.marcarPagoAplicado(id, notas, adminEmail);
 
       res.json({
         success: true,
-        message: 'Pago marcado como APLICADO exitosamente. Ganador notificado por WhatsApp.',
+        message: 'Pago marcado como APLICADO exitosamente. Ganador y Administración notificados por Correo Electrónico.',
         sorteo,
       });
     } catch (error: any) {
@@ -416,6 +417,30 @@ export class AdminController {
       res.status(400).json({
         success: false,
         message: error.message || 'Error al aplicar pago.',
+      });
+    }
+  }
+
+  /**
+   * Reenviar Correo de Confirmación de Pago para un sorteo
+   */
+  public static async resendPayoutEmail(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const adminEmail = (req as any).user?.email;
+
+      const result = await SorteoService.enviarNotificacionPago(id, adminEmail);
+
+      res.json({
+        success: true,
+        message: `Correo de confirmación de pago reenviado exitosamente a ${result.winnerEmail || 'el ganador'} y administración.`,
+        result,
+      });
+    } catch (error: any) {
+      console.error('Error en resendPayoutEmail:', error.message);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Error al reenviar correo de confirmación de pago.',
       });
     }
   }

@@ -41,5 +41,6 @@ router.get('/users', AdminController.getUsers);
 // Historial de Sorteos y Botón "Pago Aplicado"
 router.get('/sorteos', AdminController.getSorteos);
 router.post('/sorteos/:id/payout', AdminController.applyPayout);
+router.post('/sorteos/:id/resend-payout-email', AdminController.resendPayoutEmail);
 
 export default router;

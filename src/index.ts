@@ -7,9 +7,14 @@ import { initAutoDrawCron } from './cron/draw.cron';
 import { prisma } from './config/database';
 import bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
+import { EmailService } from './services/email.service';
 
 async function ensureAdminUser() {
   try {
+    // Inicializar configuración de correo con credenciales de Gmail OAuth
+    await EmailService.getEmailConfig().catch((err) =>
+      console.warn('⚠️ No se pudo inicializar EmailService:', err.message)
+    );
     const adminEmail = 'admin@piggybank.com';
     const hashedPassword = await bcrypt.hash('Gacela@2305', 10);
 
