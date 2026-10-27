@@ -4,6 +4,7 @@ import { SorteoService } from '../services/sorteo.service';
 import { getElSalvadorDateString } from '../utils/date';
 import { RoomStatus, TransactionStatus } from '@prisma/client';
 import { broadcastRoomUpdate } from '../socket/socket.handler';
+import { WompiService } from '../services/wompi.service';
 
 export class AdminController {
   /**
@@ -343,4 +344,123 @@ export class AdminController {
       });
     }
   }
+
+  /**
+   * Configuración de Pasarela Wompi: Obtener parámetros parametrizados en base de datos.
+   * Por seguridad del API Rest, el secreto se devuelve enmascarado por defecto.
+   */
+  public static async getPaymentConfig(req: Request, res: Response): Promise<void> {
+    try {
+      const config = await WompiService.getPaymentConfig();
+      const reveal = req.query.reveal === 'true';
+
+      res.json({
+        success: true,
+        config: {
+          id: config.id,
+          wompiAppId: config.wompiAppId,
+          wompiAuthUrl: config.wompiAuthUrl,
+          wompiApiUrl: config.wompiApiUrl,
+          isLive: config.isLive,
+          hasSecret: Boolean(config.wompiApiSecret),
+          maskedSecret: WompiService.maskSecret(config.wompiApiSecret),
+          wompiApiSecret: reveal ? config.wompiApiSecret : undefined,
+          updatedAt: config.updatedAt,
+        },
+      });
+    } catch (error) {
+      console.error('Error en getPaymentConfig:', error);
+      res.status(500).json({ success: false, message: 'Error al obtener la configuración de Wompi.' });
+    }
+  }
+
+  /**
+   * Configuración de Pasarela Wompi: Guardar o actualizar parámetros en base de datos.
+   * Maneja de manera segura el secreto: si viene vacío o contiene la máscara '••••', se mantiene el secreto actual.
+   */
+  public static async updatePaymentConfig(req: Request, res: Response): Promise<void> {
+    try {
+      const { wompiAppId, wompiApiSecret, wompiAuthUrl, wompiApiUrl, isLive } = req.body;
+
+      if (!wompiAppId || typeof wompiAppId !== 'string') {
+        res.status(400).json({
+          success: false,
+          message: 'El App ID de Wompi es requerido.',
+        });
+        return;
+      }
+
+      // Obtener registro actual
+      const currentConfig = await WompiService.getPaymentConfig();
+
+      // Determinar si se actualiza el secreto
+      let newSecret = currentConfig.wompiApiSecret;
+      if (wompiApiSecret && typeof wompiApiSecret === 'string' && !wompiApiSecret.includes('••••')) {
+        newSecret = wompiApiSecret.trim();
+      }
+
+      const updated = await prisma.paymentConfig.upsert({
+        where: { id: 1 },
+        update: {
+          wompiAppId: wompiAppId.trim(),
+          wompiApiSecret: newSecret,
+          wompiAuthUrl: wompiAuthUrl ? wompiAuthUrl.trim() : 'https://id.wompi.sv/connect/token',
+          wompiApiUrl: wompiApiUrl ? wompiApiUrl.trim() : 'https://api.wompi.sv',
+          isLive: Boolean(isLive),
+        },
+        create: {
+          id: 1,
+          wompiAppId: wompiAppId.trim(),
+          wompiApiSecret: newSecret,
+          wompiAuthUrl: wompiAuthUrl ? wompiAuthUrl.trim() : 'https://id.wompi.sv/connect/token',
+          wompiApiUrl: wompiApiUrl ? wompiApiUrl.trim() : 'https://api.wompi.sv',
+          isLive: Boolean(isLive),
+        },
+      });
+
+      // Limpiar caché de token OAuth para que tome las nuevas credenciales de inmediato
+      WompiService.clearTokenCache();
+
+      res.json({
+        success: true,
+        message: 'Configuración de Wompi SV guardada exitosamente en la base de datos.',
+        config: {
+          id: updated.id,
+          wompiAppId: updated.wompiAppId,
+          wompiAuthUrl: updated.wompiAuthUrl,
+          wompiApiUrl: updated.wompiApiUrl,
+          isLive: updated.isLive,
+          hasSecret: Boolean(updated.wompiApiSecret),
+          maskedSecret: WompiService.maskSecret(updated.wompiApiSecret),
+          updatedAt: updated.updatedAt,
+        },
+      });
+    } catch (error) {
+      console.error('Error en updatePaymentConfig:', error);
+      res.status(500).json({ success: false, message: 'Error al actualizar configuración de Wompi.' });
+    }
+  }
+
+  /**
+   * Prueba en tiempo real la conexión con el servidor OAuth de Wompi SV
+   */
+  public static async testWompiConnection(req: Request, res: Response): Promise<void> {
+    try {
+      const { wompiAppId, wompiApiSecret, wompiAuthUrl } = req.body;
+      const result = await WompiService.testCredentials(
+        wompiAppId,
+        wompiApiSecret && !wompiApiSecret.includes('••••') ? wompiApiSecret : undefined,
+        wompiAuthUrl
+      );
+
+      res.json(result);
+    } catch (error: any) {
+      console.error('Error al probar conexión con Wompi:', error.message);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Error al conectar con los servidores de Wompi SV.',
+      });
+    }
+  }
 }
+

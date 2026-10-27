@@ -112,6 +112,21 @@ async function main() {
     console.log('✅ Salas iniciales de sorteo creadas.');
   }
 
+  // 5. Configuración Pasarela Wompi El Salvador
+  const wompiConfig = await prisma.paymentConfig.upsert({
+    where: { id: 1 },
+    update: {},
+    create: {
+      id: 1,
+      wompiAppId: 'ba6ddd9d-e5d4-4c73-8571-9c3fde2f31e2',
+      wompiApiSecret: '4dbf191f-c328-4a98-af50-c85a6722a599',
+      wompiAuthUrl: 'https://id.wompi.sv/connect/token',
+      wompiApiUrl: 'https://api.wompi.sv',
+      isLive: false,
+    },
+  });
+  console.log('✅ WompiConfig configurado (App ID):', wompiConfig.wompiAppId);
+
   console.log('🏁 Seed completado con éxito.');
 }
 

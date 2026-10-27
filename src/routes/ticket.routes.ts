@@ -13,6 +13,14 @@ router.post(
   TicketController.initiateCheckout
 );
 
+// Compra directa con tarjeta vía API Wompi TransaccionCompra
+router.post(
+  '/pay-card',
+  authenticateJWT,
+  participationGuardMiddleware,
+  TicketController.payWithCard
+);
+
 // Consultar boleto / pase digital en sala
 router.get('/my-pass/:roomId', authenticateJWT, TicketController.getMyPassForRoom);
 

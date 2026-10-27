@@ -69,4 +69,33 @@ export class TicketController {
       res.status(500).json({ success: false, message: 'Error al consultar boleto de sala.' });
     }
   }
+
+  /**
+   * Ejecuta una compra directa de pase mediante Transacción de Compra Wompi
+   */
+  public static async payWithCard(req: AuthRequest, res: Response): Promise<void> {
+    try {
+      const userId = req.user!.id;
+      const { roomId, cardData } = req.body;
+
+      if (!roomId) {
+        res.status(400).json({ success: false, message: 'El ID de la sala es obligatorio.' });
+        return;
+      }
+
+      const result = await WompiService.executePurchaseTransaction(userId, roomId, cardData);
+
+      res.json({
+        message: '¡Transacción aprobada! Pase digital emitido exitosamente.',
+        ...result,
+      });
+    } catch (error: any) {
+      console.error('Error en payWithCard:', error.message);
+      res.status(400).json({
+        success: false,
+        message: error.message || 'Error al procesar la compra del pase digital.',
+      });
+    }
+  }
 }
+

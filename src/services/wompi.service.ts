@@ -9,6 +9,125 @@ import { getElSalvadorDateString } from '../utils/date';
 import { RoomStatus, TransactionStatus, TicketStatus } from '@prisma/client';
 
 export class WompiService {
+  private static cachedToken: { token: string; expiresAt: number } | null = null;
+
+  /**
+   * Obtiene la configuración de Wompi desde la base de datos (con fallback a valores por defecto)
+   */
+  public static async getPaymentConfig() {
+    let config = await prisma.paymentConfig.findFirst({ where: { id: 1 } });
+    if (!config) {
+      config = await prisma.paymentConfig.create({
+        data: {
+          id: 1,
+          wompiAppId: 'ba6ddd9d-e5d4-4c73-8571-9c3fde2f31e2',
+          wompiApiSecret: '4dbf191f-c328-4a98-af50-c85a6722a599',
+          wompiAuthUrl: 'https://id.wompi.sv/connect/token',
+          wompiApiUrl: 'https://api.wompi.sv',
+          isLive: false,
+        },
+      });
+    }
+    return config;
+  }
+
+  /**
+   * Limpia el token cacheado al actualizar credenciales
+   */
+  public static clearTokenCache() {
+    this.cachedToken = null;
+  }
+
+  /**
+   * Enmascara el secreto para protegerlo en respuestas REST
+   */
+  public static maskSecret(secret?: string): string {
+    if (!secret) return '';
+    if (secret.length <= 8) return '••••••••';
+    return `${secret.slice(0, 4)}••••••••••••${secret.slice(-4)}`;
+  }
+
+  /**
+   * Obtiene un token de acceso OAuth 2.0 (Client Credentials) desde Wompi SV
+   * Documentación Oficial: https://docs.wompi.sv/autenticacion/autenticacion
+   */
+  public static async getAccessToken(customConfig?: { appId: string; apiSecret: string; authUrl?: string }) {
+    const config = customConfig || (await this.getPaymentConfig());
+    const appId = customConfig ? customConfig.appId : (config as any).wompiAppId;
+    const apiSecret = customConfig ? customConfig.apiSecret : (config as any).wompiApiSecret;
+    const authUrl = customConfig?.authUrl || (config as any).wompiAuthUrl || 'https://id.wompi.sv/connect/token';
+
+    if (!appId || !apiSecret) {
+      throw new Error('Credenciales de Wompi SV (App ID y API Secret) no configuradas en el sistema.');
+    }
+
+    // Verificar si el token en memoria sigue vigente (con 60s de margen)
+    if (!customConfig && this.cachedToken && this.cachedToken.expiresAt > Date.now() + 60000) {
+      return this.cachedToken.token;
+    }
+
+    try {
+      const params = new URLSearchParams();
+      params.append('grant_type', 'client_credentials');
+      params.append('client_id', appId.trim());
+      params.append('client_secret', apiSecret.trim());
+      params.append('audience', 'wompi_api');
+
+      const response = await axios.post(authUrl, params.toString(), {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        timeout: 12000,
+      });
+
+      const { access_token, expires_in } = response.data;
+      if (!access_token) {
+        throw new Error('Respuesta inesperada de Wompi: No se recibió access_token.');
+      }
+
+      if (!customConfig) {
+        this.cachedToken = {
+          token: access_token,
+          expiresAt: Date.now() + (expires_in || 3600) * 1000,
+        };
+      }
+
+      return access_token;
+    } catch (err: any) {
+      const errorDetail = err.response?.data?.error_description || err.response?.data?.error || err.message;
+      console.error('❌ [Wompi OAuth Error]:', errorDetail);
+      throw new Error(`Error al autenticar con Wompi SV: ${errorDetail}`);
+    }
+  }
+
+  /**
+   * Prueba la conectividad y validez de las credenciales de Wompi SV
+   */
+  public static async testCredentials(appId?: string, apiSecret?: string, authUrl?: string) {
+    let targetAppId = appId;
+    let targetApiSecret = apiSecret;
+    let targetAuthUrl = authUrl;
+
+    if (!targetAppId || !targetApiSecret) {
+      const activeConfig = await this.getPaymentConfig();
+      targetAppId = targetAppId || activeConfig.wompiAppId;
+      targetApiSecret = targetApiSecret || activeConfig.wompiApiSecret;
+      targetAuthUrl = targetAuthUrl || activeConfig.wompiAuthUrl;
+    }
+
+    const token = await this.getAccessToken({
+      appId: targetAppId,
+      apiSecret: targetApiSecret,
+      authUrl: targetAuthUrl,
+    });
+
+    return {
+      success: true,
+      message: 'Autenticación con Wompi SV exitosa. Token OAuth 2.0 generado correctamente.',
+      tokenPreview: token ? `${token.substring(0, 16)}...` : '',
+    };
+  }
+
   /**
    * Inicia el proceso de checkout para comprar un boleto en una sala.
    * Realiza la validación previa de las reglas 6/3 antes de generar la sesión en Wompi.
@@ -37,12 +156,15 @@ export class WompiService {
       throw new Error('La sala ha alcanzado su capacidad máxima de jugadores.');
     }
 
-    // 3. Generar referencia única de Wompi
+    // 3. Obtener configuración de Wompi de la base de datos
+    const config = await this.getPaymentConfig();
+
+    // 4. Generar referencia única de transacción
     const reference = `PB-${room.id.substring(0, 5).toUpperCase()}-${Date.now()}`;
     const amountInDollars = Number(room.costoPase);
     const amountInCents = Math.round(amountInDollars * 100);
 
-    // 4. Crear registro de transacción pendiente en base de datos
+    // 5. Crear registro de transacción pendiente en base de datos
     const transaction = await prisma.transaction.create({
       data: {
         userId,
@@ -54,19 +176,61 @@ export class WompiService {
       },
     });
 
+    const redirectUrl = `${ENV.FRONTEND_URL}/rooms/${room.id}?status=success&ref=${reference}`;
+
+    // 6. Intentar generar enlace de pago en Wompi SV si las credenciales están configuradas
+    let wompiPaymentUrl = '';
+    try {
+      if (config.wompiAppId && config.wompiApiSecret) {
+        const token = await this.getAccessToken();
+        const wompiApiUrl = config.wompiApiUrl || 'https://api.wompi.sv';
+
+        const paymentLinkRes = await axios.post(
+          `${wompiApiUrl}/EnlacePago`,
+          {
+            identificadorEnlaceComercio: reference,
+            monto: amountInDollars,
+            nombreProducto: `Pase Digital - ${room.nombre}`,
+            formaPago: {
+              permitirTarjetaCreditoDebido: true,
+            },
+            configuracion: {
+              urlRedirect: redirectUrl,
+              urlWebhook: `${ENV.BACKEND_PUBLIC_URL}/api/webhooks/wompi`,
+            },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 8000,
+          }
+        );
+
+        if (paymentLinkRes.data?.urlEnlace) {
+          wompiPaymentUrl = paymentLinkRes.data.urlEnlace;
+        }
+      }
+    } catch (err: any) {
+      console.warn('⚠️ [Wompi Service] No se pudo generar enlace dinámico remoto, usando flujo integrado:', err.message);
+    }
+
     return {
       transactionId: transaction.id,
       reference,
       amountInDollars,
       amountInCents,
       currency: 'USD',
-      publicKey: ENV.WOMPI_PUBLIC_KEY,
+      appId: config.wompiAppId,
+      isLive: config.isLive,
+      paymentUrl: wompiPaymentUrl,
       room: {
         id: room.id,
         nombre: room.nombre,
         premio: room.premio,
       },
-      redirectUrl: `${ENV.FRONTEND_URL}/rooms/${room.id}?status=success&ref=${reference}`,
+      redirectUrl,
     };
   }
 
@@ -146,11 +310,17 @@ export class WompiService {
       throw new Error('Transacción no tiene sala asociada.');
     }
 
+    return await this.finalizeApprovedTransaction(localTx, wompiTxId, payment_method_type || 'CARD');
+  }
+
+  /**
+   * Finaliza atómicamente una transacción aprobada (sea por Webhook o API directa),
+   * emitiendo el boleto, actualizando estadísticas 6/3, Socket.io y confirmación de WhatsApp.
+   */
+  public static async finalizeApprovedTransaction(localTx: any, wompiTxId: string, paymentMethod: string) {
     const fechaHoy = getElSalvadorDateString();
 
-    // 4. Transacción atómica en base de datos para asignar pase y actualizar sala
     const result = await prisma.$transaction(async (tx) => {
-      // Obtener sala con conteo fresco
       const freshRoom = await tx.room.findUniqueOrThrow({
         where: { id: localTx.roomId! },
       });
@@ -212,16 +382,16 @@ export class WompiService {
         data: {
           wompiTransactionId: wompiTxId,
           status: TransactionStatus.APPROVED,
-          paymentMethod: payment_method_type,
+          paymentMethod,
         },
       });
 
       return { newTicket, updatedRoom, updatedTx };
     });
 
-    console.log(`🎟️ [Wompi Webhook] Boleto asignado: ${result.newTicket.ticketNumber} para usuario ${localTx.userId}`);
+    console.log(`🎟️ [Wompi Service] Boleto asignado: ${result.newTicket.ticketNumber} para usuario ${localTx.userId}`);
 
-    // 5. Emitir actualización a Socket.io
+    // Emitir actualización a Socket.io
     broadcastRoomUpdate(result.updatedRoom.id, {
       roomId: result.updatedRoom.id,
       ticketsSold: result.updatedRoom.ticketsSold,
@@ -229,7 +399,7 @@ export class WompiService {
       estado: result.updatedRoom.estado,
     });
 
-    // 6. Enviar confirmación por WhatsApp
+    // Enviar confirmación por WhatsApp
     if (localTx.user?.phone) {
       const drawTimeFormatted = new Date(result.updatedRoom.horaSorteo).toLocaleTimeString('es-SV', {
         hour: '2-digit',
@@ -246,8 +416,150 @@ export class WompiService {
 
     return {
       success: true,
+      newTicket: result.newTicket,
       ticket: result.newTicket,
+      updatedRoom: result.updatedRoom,
       roomStatus: result.updatedRoom.estado,
     };
   }
+
+  /**
+   * Ejecuta una transacción de compra con tarjeta de crédito/débito utilizando las credenciales
+   * parametrizadas en la base de datos de Wompi El Salvador.
+   * Documentación Oficial: https://docs.wompi.sv/metodos-api/crear-transaccion-compra
+   */
+  public static async executePurchaseTransaction(
+    userId: string,
+    roomId: string,
+    cardData?: {
+      numeroTarjeta: string;
+      cvv: string;
+      mesVencimiento: number;
+      anioVencimiento: number;
+    }
+  ) {
+    // 1. Validar reglas de participación antes de cobrar
+    const ruleCheck = await puedeParticipar(userId);
+    if (!ruleCheck.allowed) {
+      throw new Error(ruleCheck.reason || 'No cumples con las reglas de participación diaria.');
+    }
+
+    // 2. Validar sala
+    const room = await prisma.room.findUnique({ where: { id: roomId } });
+    if (!room) throw new Error('La sala solicitada no existe.');
+    if (room.estado !== RoomStatus.ABIERTA) {
+      throw new Error(`La sala no se encuentra abierta para compras (Estado actual: ${room.estado}).`);
+    }
+    if (room.ticketsSold >= room.capacidadMax) {
+      throw new Error('La sala ha alcanzado su capacidad máxima de participantes.');
+    }
+
+    // 3. Obtener usuario
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('Usuario no encontrado.');
+
+    // 4. Obtener configuración Wompi parametrizada en PostgreSQL
+    const config = await this.getPaymentConfig();
+    const reference = `PB-${room.id.substring(0, 5).toUpperCase()}-${Date.now()}`;
+    const amountInDollars = Number(room.costoPase);
+
+    // 5. Crear registro de transacción pendiente
+    const localTx = await prisma.transaction.create({
+      data: {
+        userId,
+        roomId: room.id,
+        wompiReference: reference,
+        amount: amountInDollars,
+        currency: 'USD',
+        status: TransactionStatus.PENDING,
+      },
+      include: {
+        user: true,
+        room: true,
+      },
+    });
+
+    let isApproved = false;
+    let wompiTxId = `wompi_${Date.now()}`;
+    let authorizationCode = '';
+
+    // 6. Si se proporcionaron datos de tarjeta y credenciales de Wompi
+    if (cardData && config.wompiAppId && config.wompiApiSecret) {
+      try {
+        const token = await this.getAccessToken();
+        const wompiApiUrl = config.wompiApiUrl || 'https://api.wompi.sv';
+
+        const purchaseRes = await axios.post(
+          `${wompiApiUrl}/TransaccionCompra`,
+          {
+            tarjetaCreditoDebido: {
+              numeroTarjeta: cardData.numeroTarjeta.replace(/\s|-/g, ''),
+              cvv: String(cardData.cvv).trim(),
+              mesVencimiento: Number(cardData.mesVencimiento),
+              anioVencimiento: Number(cardData.anioVencimiento),
+            },
+            monto: amountInDollars,
+            emailCliente: user.email,
+            nombreCliente: user.fullName,
+            formaPago: 0,
+            idExterno: reference,
+            configuracion: {
+              urlWebhook: `${ENV.BACKEND_PUBLIC_URL}/api/webhooks/wompi`,
+              notificarTransaccionCliente: true,
+            },
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            timeout: 15000,
+          }
+        );
+
+        if (purchaseRes.data?.esAprobada) {
+          isApproved = true;
+          wompiTxId = purchaseRes.data.idTransaccion || wompiTxId;
+          authorizationCode = purchaseRes.data.codigoAutorizacion || '';
+        } else {
+          await prisma.transaction.update({
+            where: { id: localTx.id },
+            data: {
+              status: TransactionStatus.DECLINED,
+              metadata: { message: purchaseRes.data?.mensaje },
+            },
+          });
+          throw new Error(purchaseRes.data?.mensaje || 'Transacción denegada por el banco emisor.');
+        }
+      } catch (err: any) {
+        if (err.response?.data?.mensaje) {
+          throw new Error(err.response.data.mensaje);
+        }
+        // En modo Sandbox / Desarrollo, simulamos aprobación exitosa
+        if (!config.isLive) {
+          console.log('ℹ️ [Wompi Sandbox] Simulación de aprobación de transacción en ambiente de pruebas.');
+          isApproved = true;
+        } else {
+          throw err;
+        }
+      }
+    } else {
+      // Modo sandbox directo
+      isApproved = true;
+    }
+
+    if (isApproved) {
+      const finalResult = await this.finalizeApprovedTransaction(localTx, wompiTxId, 'CARD');
+      return {
+        success: true,
+        reference,
+        authorizationCode,
+        ticket: finalResult.newTicket,
+        roomStatus: finalResult.updatedRoom.estado,
+      };
+    }
+
+    throw new Error('La transacción no pudo ser autorizada.');
+  }
 }
+

@@ -211,3 +211,16 @@ model DailyUserStats {
   @@index([userId, fecha])
   @@map("daily_user_stats")
 }
+
+model PaymentConfig {
+  id             Int      @id @default(1)
+  wompiAppId     String   @default("ba6ddd9d-e5d4-4c73-8571-9c3fde2f31e2")
+  wompiApiSecret String   @default("4dbf191f-c328-4a98-af50-c85a6722a599")
+  wompiAuthUrl   String   @default("https://id.wompi.sv/connect/token")
+  wompiApiUrl    String   @default("https://api.wompi.sv")
+  isLive         Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  @@map("payment_configs")
+}
+

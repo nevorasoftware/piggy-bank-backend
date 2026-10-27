@@ -22,6 +22,11 @@ router.post('/rooms/:id/draw', AdminController.triggerRoomDraw);
 router.get('/config', AdminController.getGameConfig);
 router.put('/config', AdminController.updateGameConfig);
 
+// Configuración de Pasarela Wompi El Salvador (App ID, API Secret, Ambiente)
+router.get('/wompi-config', AdminController.getPaymentConfig);
+router.put('/wompi-config', AdminController.updatePaymentConfig);
+router.post('/wompi-config/test', AdminController.testWompiConnection);
+
 // Gestión de Usuarios (DUI, teléfono, datos bancarios)
 router.get('/users', AdminController.getUsers);
 
