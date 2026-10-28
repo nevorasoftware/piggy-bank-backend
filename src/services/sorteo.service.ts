@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { prisma } from '../config/database';
 import { RoomStatus, TicketStatus, PayoutStatus } from '@prisma/client';
-import { broadcastSorteoStart, broadcastSorteoWinner } from '../socket/socket.handler';
+import { broadcastSorteoStart, broadcastSorteoWinner, broadcastPayoutApplied } from '../socket/socket.handler';
 import { WhatsAppService } from './whatsapp.service';
 import { EmailService } from './email.service';
 import { getElSalvadorDateString } from '../utils/date';
@@ -235,6 +235,17 @@ export class SorteoService {
 
     const bankName = sorteo.ganador.bankAccount?.bankName || 'Cuenta Bancaria';
     const accountNumber = sorteo.ganador.bankAccount?.accountNumber || 'Registrada en perfil';
+
+    // Emitir evento en tiempo real vía Socket.io para que la pantalla del ganador cambie el boleto de amarillo a verde al instante sin F5
+    broadcastPayoutApplied({
+      sorteoId: updatedSorteo.id,
+      roomId: updatedSorteo.roomId,
+      ganadorUserId: updatedSorteo.ganadorUserId,
+      estadoPago: updatedSorteo.estadoPago,
+      montoPremio: Number(updatedSorteo.montoPremio),
+      notasPago: updatedSorteo.notasPago || undefined,
+      fechaPago: updatedSorteo.fechaPago || new Date(),
+    });
 
     // Enviar notificación de pago aplicado EXCLUSIVAMENTE al correo registrado del ganador
     // Remitente de salida: piggybanksv@gmail.com

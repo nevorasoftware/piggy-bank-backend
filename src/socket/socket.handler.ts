@@ -29,6 +29,21 @@ export function initSocketIO(httpServer: HttpServer): Server {
       console.log(`🚪 Socket ${socket.id} salió de la sala: room_${roomId}`);
     });
 
+    // Unirse al canal personal del usuario logueado para eventos en tiempo real
+    socket.on('join_user', (userId: string) => {
+      if (userId) {
+        socket.join(`user_${userId}`);
+        console.log(`👤 Socket ${socket.id} se unió al canal de usuario: user_${userId}`);
+      }
+    });
+
+    socket.on('leave_user', (userId: string) => {
+      if (userId) {
+        socket.leave(`user_${userId}`);
+        console.log(`🚪 Socket ${socket.id} salió del canal de usuario: user_${userId}`);
+      }
+    });
+
     socket.on('disconnect', () => {
       console.log(`❌ Socket desconectado: ${socket.id}`);
     });
@@ -65,6 +80,34 @@ export function broadcastSorteoWinner(roomId: string, data: any): void {
     io.to(`room_${roomId}`).emit('sorteo:ganador', data);
     io.emit('rooms:list_update', { roomId, estado: 'FINALIZADA', ...data });
     io.emit('global:sorteo_winner', data);
+  }
+}
+
+/**
+ * Emite la confirmación de pago aplicado de un sorteo para actualizar en tiempo real
+ * la pantalla del usuario ganador (cambiar ticket de amarillo a verde) sin recargar la página.
+ */
+export function broadcastPayoutApplied(data: {
+  sorteoId: string;
+  roomId: string;
+  ganadorUserId: string;
+  estadoPago: string;
+  montoPremio: number;
+  notasPago?: string;
+  fechaPago?: Date | string;
+}): void {
+  if (io) {
+    console.log(`⚡ [Socket] Transmitiendo evento de pago aplicado para ganador: ${data.ganadorUserId} en sala: ${data.roomId}`);
+    // 1. Emitir a la sala de sorteo
+    io.to(`room_${data.roomId}`).emit('payout:applied', data);
+    io.to(`room_${data.roomId}`).emit('room:update', { action: 'payout_applied', ...data });
+
+    // 2. Emitir directamente al canal personal del usuario ganador
+    io.to(`user_${data.ganadorUserId}`).emit('user:payout_applied', data);
+
+    // 3. Emitir a nivel global (para actualizar perfil /profile o listas de boletos de cualquier pantalla activa)
+    io.emit('global:payout_applied', data);
+    io.emit('rooms:list_update', { action: 'payout_applied', ...data });
   }
 }
 
